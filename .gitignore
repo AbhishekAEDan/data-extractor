@@ -8,11 +8,15 @@ config.json
 __pycache__/
 *.pyc
 
-# generated output and logs
-logs/
-output/
+# generated output and logs (keep the empty folders via .gitkeep)
+logs/*
+!logs/.gitkeep
+output/*
+!output/.gitkeep
 *.scratch*
 
 # --- school content: NEVER public ---
-documents/
+# (keep the empty documents folder, never its contents)
+documents/*
+!documents/.gitkeep
 *.docx

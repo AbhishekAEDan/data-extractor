@@ -3,7 +3,7 @@ bootstrap.py -- auto-install prerequisites.
 
 Called at startup and before every run: anything missing gets installed
 (pip packages, Ollama itself via winget/installer, the judge model via
-`ollama pull`). run.bat elevates to admin so installs never fail on rights.
+`ollama pull`). Everything installs per-user -- no admin rights needed.
 
 Author: AbhishekAEDan
 """

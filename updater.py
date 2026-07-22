@@ -16,7 +16,7 @@ import re
 import urllib.request
 import webbrowser
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 REPO = "AbhishekAEDan/data-extractor"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"

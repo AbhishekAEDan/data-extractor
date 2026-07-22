@@ -3,18 +3,21 @@ rem Brent & Co. Data Extractor -- author: AbhishekAEDan
 title Brent ^& Co. Data Extractor
 color 0B
 
-rem ---- self-elevate to admin (needed for auto-installs), keep dragged paths ----
-net session >nul 2>&1
-if %errorlevel% neq 0 (
-    echo Requesting administrator rights...
-    if "%~1"=="" (
-        powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
-    ) else (
-        powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -ArgumentList '%*' -Verb RunAs"
-    )
-    exit /b
-)
+rem No admin needed: pip, winget and the Ollama installer all work per-user.
+rem (Self-elevation removed -- UAC + SmartScreen killed zip-downloaded copies.)
 
 cd /d "%~dp0"
+
+where python >nul 2>&1
+if %errorlevel% neq 0 (
+    echo.
+    echo   Python was not found on this computer.
+    echo   Install it from https://www.python.org/downloads/
+    echo   IMPORTANT: tick "Add python.exe to PATH" during install.
+    echo.
+    pause
+    exit /b 1
+)
+
 python main.py %*
 pause

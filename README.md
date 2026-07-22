@@ -1,13 +1,13 @@
 <div align="center">
 
-```
+<pre>
  ____                 _      ___      ____
 | __ ) _ __ ___ _ __ | |_   ( _ )    / ___|___
 |  _ \| '__/ _ \ '_ \| __|  / _ \/\ | |   / _ \ _
 | |_) | | |  __/ | | | |_  | (_>  < | |__| (_) |_|
 |____/|_|  \___|_| |_|\__|  \___/\/  \____\___/
         D A T A   E X T R A C T O R
-```
+</pre>
 
 ### 📚 Turns ELA lesson `.docx` files into clean CSV spreadsheets — fast, verbatim, no hallucination.
 

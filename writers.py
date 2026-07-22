@@ -51,10 +51,16 @@ def order_cols(rows):
 
 
 def write_csv(path, header, data_rows):
+    """Write one template sheet. The first column is always Unit Number:
+    it is wrapped as ="3.10" so Excel keeps it as text -- otherwise Excel
+    coerces 3.10 to the number 3.1 and the trailing zero is lost."""
     with open(path, "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.writer(fh)
         w.writerow(header)
         for r in data_rows:
+            r = list(r)
+            if r and r[0] not in ("", None):
+                r[0] = f'="{r[0]}"'
             w.writerow(r)
 
 

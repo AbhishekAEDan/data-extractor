@@ -1,0 +1,18 @@
+# --- secrets: never commit the real API key ---
+.env
+
+# local runtime state / user prefs
+config.json
+
+# python caches
+__pycache__/
+*.pyc
+
+# generated output and logs
+logs/
+output/
+*.scratch*
+
+# --- school content: NEVER public ---
+documents/
+*.docx

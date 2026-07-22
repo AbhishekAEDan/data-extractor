@@ -32,7 +32,9 @@ Spotter, Unit Covers, Comprehension Texts, Portfolios and more.
 - 🤖 **AI only as a librarian** — a local model (Ollama/Qwen) or the Gemini
   API is used *only* to classify section headings the parser doesn't
   recognise. It never touches your content.
-- 🖱️ **Drag & drop** — drop a file or a whole Term folder onto `run.bat`.
+- 🖱️ **Drag & drop** — drop a file, a whole Term folder, or a **.zip full
+  of lessons** onto `run.bat` (zips in `documents/` work too — they're
+  extracted automatically).
 - 🔄 **Live folder watch** — add or remove documents *while a run is going*;
   the run rescans at the end and reconciles automatically.
 - 🔔 **Self-updating** — the app checks this repo's

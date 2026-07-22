@@ -178,14 +178,61 @@ def pause():
     input("\n  Press Enter to go back...")
 
 
+_ZIP_CACHE = {}   # zip path -> (mtime, [extracted .docx paths])
+
+
+def _docx_from_zip(zip_path):
+    """Extract the .docx files inside a zip to a temp folder (internal
+    subfolders preserved) and return their paths. Cached per zip mtime so
+    the menu redraw doesn't re-extract every time."""
+    import tempfile
+    import zipfile
+    try:
+        mtime = os.path.getmtime(zip_path)
+    except OSError:
+        return []
+    hit = _ZIP_CACHE.get(zip_path)
+    if hit and hit[0] == mtime and all(os.path.exists(p) for p in hit[1]):
+        return hit[1]
+    dest = os.path.join(tempfile.gettempdir(), "data-extractor-zips",
+                        f"{os.path.splitext(os.path.basename(zip_path))[0]}_{int(mtime)}")
+    out = []
+    try:
+        with zipfile.ZipFile(zip_path) as z:
+            for info in z.infolist():
+                name = info.filename
+                base = os.path.basename(name)
+                # skip macOS junk and Word lock files
+                if (not name.lower().endswith(".docx") or "__MACOSX" in name
+                        or base.startswith(("~$", "._"))):
+                    continue
+                target = os.path.join(dest, *name.split("/"))
+                if not os.path.exists(target):
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    with z.open(info) as src, open(target, "wb") as dst:
+                        dst.write(src.read())
+                out.append(target)
+    except Exception as e:
+        print(f"  [!] Could not read zip {os.path.basename(zip_path)}: {e}")
+        return []
+    _ZIP_CACHE[zip_path] = (mtime, out)
+    return out
+
+
 def find_docx(sources):
-    """Collect .docx from files/folders (recursive -- Term/Unit subfolders ok)."""
+    """Collect .docx from files/folders (recursive -- Term/Unit subfolders
+    ok). Zip archives -- dragged onto run.bat or dropped into documents\\ --
+    are extracted automatically and their .docx included."""
     out = []
     for src in sources:
         if os.path.isfile(src) and src.lower().endswith(".docx"):
             out.append(src)
+        elif os.path.isfile(src) and src.lower().endswith(".zip"):
+            out.extend(_docx_from_zip(src))
         elif os.path.isdir(src):
             out.extend(glob.glob(os.path.join(src, "**", "*.docx"), recursive=True))
+            for zp in glob.glob(os.path.join(src, "**", "*.zip"), recursive=True):
+                out.extend(_docx_from_zip(zp))
     out = [f for f in out if not os.path.basename(f).startswith("~$")]
     return sorted(dict.fromkeys(out))
 
@@ -389,7 +436,12 @@ def run_extraction(cfg, sources):
     rows, label_files = [], {}   # label -> [filenames it appears in]
 
     def parse_one(path, i, n):
-        name = os.path.relpath(path, root) if root else os.path.basename(path)
+        # zip-extracted docs live in a temp folder outside root -- show
+        # just their name instead of a ..\..\ relative path
+        if root and os.path.abspath(path).startswith(os.path.abspath(root)):
+            name = os.path.relpath(path, root)
+        else:
+            name = os.path.basename(path)
         try:
             found = set()
             row = parse_docx(path, found)

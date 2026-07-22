@@ -1,27 +1,30 @@
 """
 writers.py
 
-Writes the parsed rows to CSV files. Output = the seven "Spread Sheets 2"
-export layouts plus wide.csv (everything, one row per doc, for debugging):
+Writes the parsed rows to CSV files. Output layouts mirror the official
+"Updated Spread Sheets" workbooks (one CSV per sheet, headers copied exactly
+from the templates -- including their spacing/typo quirks, e.g. "Vocab
+Vault  1", "Unit Number " and "Porject Title"):
 
-  wide.csv                                       (all fields, every document)
-  ELA Mini Practice.csv                          (per lesson)
-  ELA Individual Sub Unit My Checklist, Quick Recap, Reflect.csv (per lesson)
-  _ELA Main Comprehension Text.csv               (per lesson that has a text)
-  Unit Intro Page.csv                            (per Unit N Introduction)
-  ELA End Of Unit Portfolio Doc.csv              (per End of Unit N)
-  ELA  Overall Portfolio Project.csv             (per End of Unit N Portfolio)
-  ELA Check Your Understanding Term 2.csv         (Term 2 docs only; header-only
-                                                  when no such source is present)
+  main doc sheets (one row per sub-unit lesson):
+    Unit Cover Page.csv
+    Vocab Vault.csv
+    Mistake Spotter.csv
+    Mini Practice.csv
+    Check Your Understanding.csv
+    In Sub Unit Portfolio Proj.csv
+    Sub Unit Recap.csv
+    (Main Lesson sheet is intentionally NOT produced -- filled by a human)
 
-plus the four top-level "Corrected OUTPUT" layouts (restored 2026-07-20):
+  unit-level sheets:
+    Unit Introduction.csv          (per Unit N Introduction doc)
+    End of Unit Recap.csv          (per End of Unit N doc)
+    End of Unit Portfolio.csv      (per End of Unit N Portfolio doc)
 
-  ELA Main Lesson.csv                            (per lesson; Main Lesson split
-                                                  into Top Content / Step 1-4)
-  ELA Bridge Back & Vocabulary Vault.csv         (per lesson; Vocab Vault split
-                                                  into Key Word/Definition pairs)
-  ELA Mistake Spotter.csv                        (per lesson; Key Tag/content pairs)
-  ELA Unit Cover (Goals & By End Of Lesson Content).csv  (per lesson)
+  extras:
+    full_extract.csv                  (debug: every parsed field, one row
+                                       per document; formerly wide.csv --
+                                       comprehension fields live here too)
 
 All values are verbatim slices from the parser -- no rewriting happens here.
 
@@ -33,7 +36,7 @@ import csv
 import os
 import re
 
-from parser_core import ORDER
+from parser_core import ORDER, _match_portfolio_section, strip_bullet
 
 
 # ---------- helpers ----------
@@ -70,11 +73,11 @@ def join_nonempty(*parts, sep="\n"):
     return sep.join(p for p in parts if p and p.strip()).strip()
 
 
-# ---------- lesson-level sheets ----------
+# ---------- debug sheet ----------
 
-def write_wide(rows, out_dir):
+def write_full_extract(rows, out_dir):
     cols = order_cols(rows)
-    path = os.path.join(out_dir, "wide.csv")
+    path = os.path.join(out_dir, "full_extract.csv")
     with open(path, "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, fieldnames=cols)
         w.writeheader()
@@ -83,118 +86,16 @@ def write_wide(rows, out_dir):
     return path
 
 
-def write_mini_practice(rows, out_dir):
-    header = ["Unit Number", "Main Practice Page Title", "Page Top Content",
-              "Practice A", "Practice B", "Practice C", "What to look for",
-              "Answer Key"]
-    data = []
-    for r in _rows_of_type(rows, "lesson"):
-        data.append([
-            r.get("Unit Number", ""),
-            r.get("Mini Practice Title", ""),
-            r.get("Mini Practice Intro", ""),
-            r.get("Practice A", ""), r.get("Practice B", ""),
-            r.get("Practice C", ""), r.get("What to look for", ""),
-            r.get("Mini Practice Answer Key", ""),
-        ])
-    path = os.path.join(out_dir, "ELA Mini Practice.csv")
-    write_csv(path, header, data)
-    return path
+# ---------- main doc sheets (per sub-unit lesson) ----------
 
-
-def write_sub_unit(rows, out_dir):
-    header = ["Unit Number", "My Learning Checklist", "Quick Recap", "Reflect"]
-    data = [[r.get("Unit Number", ""), r.get("My Learning Checklist", ""),
-             r.get("Quick Recap", ""), r.get("Reflect", "")]
+def write_unit_cover(rows, out_dir):
+    header = ["Unit Number", "Sub Unit Title", "My Goal",
+              "By the End of This Lesson", "Bridge Back"]
+    data = [[r.get("Unit Number", ""), r.get("Lesson Title", ""),
+             r.get("My Goal", ""), r.get("Lesson Objectives", ""),
+             r.get("Bridge Back", "")]
             for r in _rows_of_type(rows, "lesson")]
-    path = os.path.join(out_dir,
-                        "ELA Individual Sub Unit My Checklist, Quick Recap, Reflect.csv")
-    write_csv(path, header, data)
-    return path
-
-
-def write_comprehension(rows, out_dir):
-    header = ["Unit Number", "Comprehension Title", "Before Reading / Listening",
-              "Main Text", "After Reading & Listening (Questions)", "Answer Key"]
-    data = []
-    for r in _rows_of_type(rows, "lesson"):
-        cq = r.get("Comprehension Questions", "")
-        after = join_nonempty(r.get("After Reading", ""),
-                              ("Comprehension Questions\n" + cq) if cq else "")
-        answer = r.get("Comprehension Questions Answer Key", "") \
-            or r.get("After Reading Answer Key", "")
-        title = r.get("Comprehension Title", "")
-        main = r.get("Main Text", "")
-        before = r.get("Before Reading", "")
-        # some lessons title the passage with a bold "Prose Text:/Poem:/Drama:"
-        # heading (kept as an unknown '?' column) instead of "Main Comprehension
-        # Text" -- use that label as the title when the canonical one is empty.
-        if not title:
-            for k in r:
-                if k.startswith("?") and re.search(
-                        r'\b(prose|poem|drama|play|comprehension) ', k, re.I):
-                    title = k[1:]
-                    break
-        # only lessons that actually carry a comprehension text
-        if not any([title, before, main, after]):
-            continue
-        data.append([r.get("Unit Number", ""), title, before, main, after, answer])
-    path = os.path.join(out_dir, "_ELA Main Comprehension Text.csv")
-    write_csv(path, header, data)
-    return path
-
-
-# ---------- restored "Corrected OUTPUT" top-level sheets ----------
-
-_STEP_RE = re.compile(r'^step\s*(\d+)\b', re.I)
-
-
-def _split_main_lesson(text):
-    """Split the verbatim Main Lesson text into
-    (title, top_content, {step_no: step_text}). The first line is the lesson
-    subtitle when it isn't already a Step heading; lines before 'Step 1' are
-    Top Content; each 'Step N ...' heading starts that step's block."""
-    title, top, steps = "", [], {}
-    cur = None                       # None -> top content, else step number
-    lines = [l for l in (text or "").split("\n")]
-    if lines and lines[0].strip() and not _STEP_RE.match(lines[0].strip()):
-        title = lines[0].strip()
-        lines = lines[1:]
-    for ln in lines:
-        m = _STEP_RE.match(ln.strip())
-        if m:
-            cur = int(m.group(1))
-            steps.setdefault(cur, []).append(ln)
-        elif cur is None:
-            top.append(ln)
-        else:
-            steps[cur].append(ln)
-    return (title, "\n".join(top).strip(),
-            {k: "\n".join(v).strip() for k, v in steps.items()})
-
-
-def write_main_lesson(rows, out_dir):
-    header = ["Unit Number", "Title", "Top Content", "Step 1", "Step  2",
-              "Step 3", "Step 3 Image", "Step 4", "Mini Practice ",
-              "A", "B", "C", "Answer Key"]
-    data = []
-    for r in _rows_of_type(rows, "lesson"):
-        title, top, steps = _split_main_lesson(r.get("Main Lesson", ""))
-        mini = join_nonempty(r.get("Mini Practice Title", ""),
-                             r.get("Mini Practice Intro", ""))
-        if not any([title, top, steps, mini]):
-            continue
-        # steps 5+ (rare) are appended to Step 4 so nothing is dropped
-        extra = join_nonempty(*[steps[k] for k in sorted(steps) if k > 4])
-        step4 = join_nonempty(steps.get(4, ""), extra)
-        data.append([
-            r.get("Unit Number", ""), title, top,
-            steps.get(1, ""), steps.get(2, ""), steps.get(3, ""),
-            "", step4, mini,
-            r.get("Practice A", ""), r.get("Practice B", ""),
-            r.get("Practice C", ""), r.get("Mini Practice Answer Key", ""),
-        ])
-    path = os.path.join(out_dir, "ELA Main Lesson.csv")
+    path = os.path.join(out_dir, "Unit Cover Page.csv")
     write_csv(path, header, data)
     return path
 
@@ -202,132 +103,112 @@ def write_main_lesson(rows, out_dir):
 _VOCAB_ENTRY_RE = re.compile(r'^([^:]{1,60}?):\s*(.*)$')
 
 
-def write_bridge_vocab(rows, out_dir):
-    header = (["Unit Number"]
-              + [c for i in range(1, 8)
-                 for c in (f"Key Word {i}",
-                           "Definition  1" if i == 1 else f"Definition {i}")]
-              + [f"Vocabulary Vault {i}" for i in range(8, 12)])
+def write_vocab_vault(rows, out_dir):
+    # template header has a double space: "Vocab Vault  1"
+    header = ["Unit Number"] + [f"Vocab Vault  {i}" for i in range(1, 11)]
     data = []
     for r in _rows_of_type(rows, "lesson"):
-        entries = []                 # [(word, definition_lines)]
+        entries = []                 # each entry = list of verbatim lines
         for ln in (r.get("Vocab Vault", "") or "").split("\n"):
-            m = _VOCAB_ENTRY_RE.match(ln.strip())
-            if m:
-                entries.append((m.group(1).strip(), [m.group(2).strip()]))
+            if _VOCAB_ENTRY_RE.match(ln.strip()):
+                entries.append([ln.strip()])
             elif entries and ln.strip():
-                entries[-1][1].append(ln.strip())
+                entries[-1].append(ln.strip())
+            elif ln.strip():
+                entries.append([ln.strip()])
         if not entries:
             continue
-        row = [r.get("Unit Number", "")]
-        for i in range(7):
-            if i < len(entries):
-                row += [entries[i][0], "\n".join(entries[i][1]).strip()]
-            else:
-                row += ["", ""]
-        overflow = [f"{w}: " + "\n".join(d).strip() for w, d in entries[7:]]
-        for i in range(4):
-            if i == 3 and len(overflow) > 4:
-                row.append("\n".join(overflow[3:]))   # never drop entries
-            else:
-                row.append(overflow[i] if i < len(overflow) else "")
-        data.append(row)
-    path = os.path.join(out_dir, "ELA Bridge Back & Vocabulary Vault.csv")
+        cells = ["\n".join(e).strip() for e in entries]
+        if len(cells) > 10:          # never drop entries: merge extras into #10
+            cells = cells[:9] + ["\n".join(cells[9:])]
+        cells += [""] * (10 - len(cells))
+        data.append([r.get("Unit Number", "")] + cells)
+    path = os.path.join(out_dir, "Vocab Vault.csv")
     write_csv(path, header, data)
     return path
 
 
-# a Mistake Spotter tag line: short capitalised lead ending in ':'
-# (e.g. "Common mistake:", "How to improve it:") -- quotes/sentences excluded
-_TAG_RE = re.compile(r'^([A-Z][^:.!?"“”]{2,45}):\s*(.*)$')
+# the four fixed Mistake Spotter tags used in the lesson docs
+_MS_TAGS = [
+    ("common mistake",          "Common mistake"),
+    ("what this may look like", "What this may look like"),
+    ("why this needs revision", "Why this needs revision"),
+    ("how to improve it",       "How to improve it"),
+]
+_MS_COLS = [c for _, c in _MS_TAGS]
+
+
+def _ms_tag(line):
+    low = line.lower()
+    for key, col in _MS_TAGS:
+        if low.startswith(key):
+            rest = line[len(key):].lstrip(" :–—-").strip()
+            return col, rest
+    return None
 
 
 def write_mistake_spotter(rows, out_dir):
-    header = ["Unit Number "]
-    for i in range(1, 11):
-        tail = " " if i in (6, 8) else ""
-        header += [f"Key Tag {i}", f"Mistake Spotter {i}{tail}"]
+    """One row per mistake group. A repeated 'Common mistake' tag starts a
+    new group (some lessons spot more than one mistake)."""
+    header = ["Unit Number"] + _MS_COLS
     data = []
     for r in _rows_of_type(rows, "lesson"):
-        pairs = []                   # [(tag, content_lines)]
-        for ln in (r.get("Mistake Spotter", "") or "").split("\n"):
-            m = _TAG_RE.match(ln.strip())
-            if m:
-                pairs.append((m.group(1).strip() + ":", [m.group(2).strip()]))
-            elif pairs and ln.strip():
-                pairs[-1][1].append(ln.strip())
-            elif ln.strip():         # content before any tag
-                pairs.append(("", [ln.strip()]))
-        if not pairs:
+        text = r.get("Mistake Spotter", "") or ""
+        if not text.strip():
             continue
-        if len(pairs) > 10:          # never drop content: merge extras into #10
-            rest = pairs[9:]
-            merged = "\n".join(
-                (f"{t} " if t else "") + "\n".join(c) for t, c in rest[1:])
-            pairs = pairs[:9] + [(rest[0][0], rest[0][1] + [merged])]
-        row = [r.get("Unit Number", "")]
-        for i in range(10):
-            if i < len(pairs):
-                row += [pairs[i][0], "\n".join(pairs[i][1]).strip()]
-            else:
-                row += ["", ""]
-        data.append(row)
-    path = os.path.join(out_dir, "ELA Mistake Spotter.csv")
+        groups = [{}]
+        cur = None
+        for ln in text.split("\n"):
+            s = ln.strip()
+            if not s:
+                continue
+            hit = _ms_tag(s)
+            if hit:
+                col, rest = hit
+                if col in groups[-1]:            # tag repeats -> new group
+                    groups.append({})
+                cur = col
+                groups[-1][col] = rest
+            elif cur:
+                g = groups[-1]
+                g[cur] = (g[cur] + "\n" + s).strip() if g[cur] else s
+            else:                                # content before any tag
+                g = groups[-1]
+                c = _MS_COLS[0]
+                g[c] = (g.get(c, "") + "\n" + s).strip() if g.get(c) else s
+                cur = c
+        for g in groups:
+            if any(g.get(c) for c in _MS_COLS):
+                data.append([r.get("Unit Number", "")]
+                            + [g.get(c, "") for c in _MS_COLS])
+    path = os.path.join(out_dir, "Mistake Spotter.csv")
     write_csv(path, header, data)
     return path
 
 
-def write_unit_cover(rows, out_dir):
-    header = ["Unit Number", "Sub Unit Title", "My Goal Information",
-              "By end of lesson content", "Bridge Back Content"]
-    data = [[r.get("Unit Number", ""), r.get("Lesson Title", ""),
-             r.get("My Goal", ""), r.get("Lesson Objectives", ""),
-             r.get("Bridge Back", "")]
-            for r in _rows_of_type(rows, "lesson")]
-    path = os.path.join(out_dir,
-                        "ELA Unit Cover (Goals & By End Of Lesson Content).csv")
-    write_csv(path, header, data)
-    return path
-
-
-# ---------- unit-level sheets ----------
-
-def write_unit_intro(rows, out_dir):
-    header = ["Unit Number", "Title", "Top Content", "At the End of Unit check list"]
-    data = [[r.get("Unit Number", ""), r.get("Unit Title", ""),
-             r.get("Top Content", ""), r.get("At End Of Unit Checklist", "")]
-            for r in _rows_of_type(rows, "unit_intro")]
-    path = os.path.join(out_dir, "Unit Intro Page.csv")
-    write_csv(path, header, data)
-    return path
-
-
-def write_end_of_unit(rows, out_dir):
-    header = ["Unit Number", "My Unit Learning Checklist", "Unit Quick Recap",
-              "Reflect"]
-    data = [[r.get("Unit Number", ""), r.get("Unit Learning Checklist", ""),
-             r.get("Unit Quick Recap", ""), r.get("Unit Reflect", "")]
-            for r in _rows_of_type(rows, "end_of_unit")]
-    path = os.path.join(out_dir, "ELA End Of Unit Portfolio Doc.csv")
-    write_csv(path, header, data)
-    return path
-
-
-def write_portfolio(rows, out_dir):
-    header = ["Unit Number", "Project Title", "Purpose", "Portfolio Link",
-              "What you will create", "Materials", "Steps",
-              "Template / How to fill it", "Example", "Common mistakes & fixes",
-              "Submission Checklist", "Optional extension", "End-of-Unit Inventory",
-              "Motivation + Reflection Skill Badge Earned", "Reflect"]
-    field = ["Project Title", "Purpose", "Portfolio Link", "What You Will Create",
-             "Materials", "Steps", "Template How To Fill", "Example",
-             "Common Mistakes And Fixes", "Submission Checklist",
-             "Optional Extension", "End-of-Unit Inventory", "Motivation Reflection",
-             "Unit Reflect"]
+def write_mini_practice(rows, out_dir):
+    # template quirk: "Unit Number " has a trailing space on this sheet
+    header = ["Unit Number ", "Mini Practice Title", "Top Paragraph",
+              "Top What to look for", "Part A", "Part B", "Part C"]
     data = []
-    for r in _rows_of_type(rows, "end_of_unit_portfolio"):
-        data.append([r.get("Unit Number", "")] + [r.get(f, "") for f in field])
-    path = os.path.join(out_dir, "ELA  Overall Portfolio Project.csv")
+    for r in _rows_of_type(rows, "lesson"):
+        # the template has no Answer Key column -- keep the key verbatim at
+        # the end of Part C so nothing is dropped
+        part_c = r.get("Practice C", "")
+        ak = r.get("Mini Practice Answer Key", "")
+        if ak:
+            part_c = join_nonempty(part_c, "Answer Key:\n" + ak)
+        if not any([r.get("Mini Practice Title"), r.get("Mini Practice Intro"),
+                    r.get("Practice A"), r.get("Practice B"), part_c]):
+            continue
+        data.append([
+            r.get("Unit Number", ""),
+            r.get("Mini Practice Title", ""),
+            r.get("Mini Practice Intro", ""),
+            r.get("What to look for", ""),
+            r.get("Practice A", ""), r.get("Practice B", ""), part_c,
+        ])
+    path = os.path.join(out_dir, "Mini Practice.csv")
     write_csv(path, header, data)
     return path
 
@@ -335,8 +216,8 @@ def write_portfolio(rows, out_dir):
 _NUMBERED_RE = re.compile(r'^(\d{1,2})[.)]\s*(.*)$')
 
 
-def _fan_numbered(text, slots=5):
-    """Split verbatim text into (preface, [item1..item5]). Lines starting
+def _fan_numbered(text, slots=10):
+    """Split verbatim text into (preface, [item1..itemN]). Lines starting
     '1.' / '2)' begin numbered items; earlier lines are the preface;
     continuation lines stay with their item. Items past `slots` are appended
     to the last slot so nothing is dropped."""
@@ -368,12 +249,13 @@ def _fan_numbered(text, slots=5):
 
 
 def write_check_understanding(rows, out_dir):
-    """One row per lesson that carries a 'Check for Understanding' block.
-    The block's numbered lines are fanned into Question 1-5; its Answer Key
-    into Answer 1-5; any lead-in text becomes the Preface."""
-    header = ["Unit Number", "Preface", "Question 1", "Question 2", "Question 3",
-              "Question 4", "Question 5", "Answer 1", "Answer 2", "Answer 3",
-              "Answer 4", "Answer 5"]
+    """One row per doc that carries a 'Check for Understanding' block.
+    Numbered lines fan into Question 1-10, the Answer Key into Answer 1-10.
+    The template has no Preface column, so any lead-in text stays verbatim
+    at the top of Question 1."""
+    header = (["Unit Number"]
+              + [f"Question {i}" for i in range(1, 11)]
+              + [f"Answer {i}" for i in range(1, 11)])
     data = []
     for r in _rows_of_type(rows, "lesson", "end_of_unit"):
         cfu = r.get("Check for Understanding", "")
@@ -383,15 +265,14 @@ def write_check_understanding(rows, out_dir):
         # some docs keep the answers inside the block after a
         # "Check your answers:" line instead of a bold Answer Key section
         if not ak:
-            m = re.search(r'^\s*check your answers\b.*$', cfu,
-                          re.I | re.M)
+            m = re.search(r'^\s*check your answers\b.*$', cfu, re.I | re.M)
             if m:
                 cfu, ak = cfu[:m.start()].rstrip(), cfu[m.end():].strip()
         preface, qs = _fan_numbered(cfu)
         ak_preface, ans = _fan_numbered(ak)
         # unnumbered blocks can't tell a lead-in instruction from question 1;
         # when there is exactly one more question than answers, the first
-        # "question" is really the preface
+        # "question" is really the lead-in
         nq = sum(1 for q in qs if q)
         na = sum(1 for a in ans if a)
         unnumbered = not any(_NUMBERED_RE.match(l.strip())
@@ -400,35 +281,168 @@ def write_check_understanding(rows, out_dir):
             preface, qs = qs[0], qs[1:] + [""]
             nq -= 1
         # a single answer means one question (e.g. a numbered word bank is
-        # options for one question, not five questions) -- and vice versa
+        # options for one question, not many questions) -- and vice versa
         if na == 1 and nq > 1:
-            qs = [join_nonempty(preface, *qs)] + [""] * 4
+            qs = [join_nonempty(preface, *qs)] + [""] * 9
             preface = ""
         elif nq == 1 and na > 1:
-            ans = [join_nonempty(*ans)] + [""] * 4
+            ans = [join_nonempty(*ans)] + [""] * 9
         # an answer key with no numbered lines still belongs in Answer 1
         if ak_preface and not any(ans):
             ans[0] = ak_preface
-        data.append([r.get("Unit Number", ""), preface] + qs + ans)
-    path = os.path.join(out_dir, "ELA Check Your Understanding Term 2.csv")
+        # no Preface column in the template -- lead-in rides on Question 1
+        if preface:
+            qs[0] = join_nonempty(preface, qs[0])
+        data.append([r.get("Unit Number", "")] + qs + ans)
+    path = os.path.join(out_dir, "Check Your Understanding.csv")
     write_csv(path, header, data)
     return path
 
 
+def _parse_portfolio_text(text):
+    """Run the portfolio section matcher over a lesson's verbatim
+    'Portfolio Project' block. Returns {column: content}."""
+    out = {}
+    cur, buf = None, []
+
+    def flush():
+        if cur and buf:
+            content = "\n".join(buf).strip()
+            if content and not out.get(cur):
+                out[cur] = content
+
+    for raw in (text or "").split("\n"):
+        s = strip_bullet(raw.strip())
+        if not s:
+            continue
+        hit = _match_portfolio_section(s)
+        if hit:
+            flush()
+            cur, buf = hit[0], ([hit[1]] if hit[1] else [])
+        elif cur:
+            buf.append(s)
+        else:
+            # text before any recognised label (usually the project title
+            # line) -- keep it, never drop content
+            cur, buf = "Project Title", [s]
+    flush()
+    return out
+
+
+def write_sub_unit_portfolio(rows, out_dir):
+    # header copied exactly from the template sheet (incl. the unit-1-specific
+    # "Example: My Netiquette Pledge" column title)
+    header = ["Unit Number", "Project Title", "Project Name", "Project link",
+              "Portfolio Link", "What you will create", "Materials",
+              "Numbered Steps", "Templates/organisers + how to fill",
+              "Example: My Netiquette Pledge", "Common mistakes + fixes",
+              "Submission checklist", "Optional extension",
+              "Motivation + reflection", "End-of-Unit Inventory"]
+    field = ["Project Title", "Project Name", "Project Link", "Portfolio Link",
+             "What You Will Create", "Materials", "Steps",
+             "Template How To Fill", "Example", "Common Mistakes And Fixes",
+             "Submission Checklist", "Optional Extension",
+             "Motivation Reflection", "End-of-Unit Inventory"]
+    data = []
+    for r in _rows_of_type(rows, "lesson"):
+        p = _parse_portfolio_text(r.get("Portfolio Project", ""))
+        if not p:
+            continue
+        # the template has no Purpose column -- keep the purpose text
+        # verbatim with 'What you will create' so nothing is dropped
+        if p.get("Purpose"):
+            p["What You Will Create"] = join_nonempty(
+                "Purpose: " + p["Purpose"], p.get("What You Will Create", ""))
+        data.append([r.get("Unit Number", "")] + [p.get(f, "") for f in field])
+    path = os.path.join(out_dir, "In Sub Unit Portfolio Proj.csv")
+    write_csv(path, header, data)
+    return path
+
+
+def write_sub_unit_recap(rows, out_dir):
+    # template quirks: trailing spaces on the checklist/recap column titles
+    header = ["Unit Number", "My Learning Checklist ", "Quick Recap ", "Reflect"]
+    data = [[r.get("Unit Number", ""), r.get("My Learning Checklist", ""),
+             r.get("Quick Recap", ""), r.get("Reflect", "")]
+            for r in _rows_of_type(rows, "lesson")
+            if any([r.get("My Learning Checklist"), r.get("Quick Recap"),
+                    r.get("Reflect")])]
+    path = os.path.join(out_dir, "Sub Unit Recap.csv")
+    write_csv(path, header, data)
+    return path
+
+
+# ---------- unit-level sheets ----------
+
+def write_unit_intro(rows, out_dir):
+    # template quirk: "Unit Number " has a trailing space on this sheet
+    header = ["Unit Number ", "Title", "Big Idea", "Essential Question",
+              "Role Call: Master Communicators", "At the End of Unit"]
+    data = [[r.get("Unit Number", ""), r.get("Unit Title", ""),
+             r.get("Big Idea", ""), r.get("Essential Question", ""),
+             r.get("Role Call", ""), r.get("At End Of Unit Checklist", "")]
+            for r in _rows_of_type(rows, "unit_intro")]
+    path = os.path.join(out_dir, "Unit Introduction.csv")
+    write_csv(path, header, data)
+    return path
+
+
+def write_end_of_unit_recap(rows, out_dir):
+    # header copied exactly from the template (incl. "Unit 1" wording and the
+    # trailing space on "Reflect ")
+    header = ["Unit Number", "My Unit 1 Learning Checklist", "Quick Recap",
+              "Reflect "]
+    data = [[r.get("Unit Number", ""), r.get("Unit Learning Checklist", ""),
+             r.get("Unit Quick Recap", ""), r.get("Unit Reflect", "")]
+            for r in _rows_of_type(rows, "end_of_unit")]
+    path = os.path.join(out_dir, "End of Unit Recap.csv")
+    write_csv(path, header, data)
+    return path
+
+
+def write_end_of_unit_portfolio(rows, out_dir):
+    # header copied exactly from the template sheet, quirks and all
+    # ("Porject Title", "Project Name " trailing space, the long inventory
+    # column title, unit-1-specific "Example Central Community Newsletter")
+    header = ["Unit Number", "Porject Title", "Project Name ", "Project Link",
+              "Portfolio Link", "What You Will Create", "Materials",
+              "Numbered Steps", "Templates/Organisers + How to Fill ",
+              "Example Central Community Newsletter", "Common Mistakes + Fixes",
+              "Submission Checklist", "Optional Extension",
+              "End-of-Unit Inventory By th[11.1]e end of this unit, your "
+              "portfolio should contain: Unit 1 Artefact Pack",
+              "Motivation + Reflection Skill Badge Earned", "Reflect"]
+    field = ["Project Title", "Project Name", "Project Link", "Portfolio Link",
+             "What You Will Create", "Materials", "Steps",
+             "Template How To Fill", "Example", "Common Mistakes And Fixes",
+             "Submission Checklist", "Optional Extension",
+             "End-of-Unit Inventory", "Motivation Reflection", "Unit Reflect"]
+    data = []
+    for r in _rows_of_type(rows, "end_of_unit_portfolio"):
+        data.append([r.get("Unit Number", "")] + [r.get(f, "") for f in field])
+    path = os.path.join(out_dir, "End of Unit Portfolio.csv")
+    write_csv(path, header, data)
+    return path
+
+
+# NOTE: the comprehension sheet was removed (2026-07-22, user request) --
+# comprehension text belongs to the human-filled Main Lesson sheet. The
+# parsed fields (Comprehension Title / Before Reading / Main Text / ...)
+# still land in full_extract.csv, so nothing is lost.
+
 def write_all(rows, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     paths = [
-        write_wide(rows, out_dir),
-        write_mini_practice(rows, out_dir),
-        write_sub_unit(rows, out_dir),
-        write_comprehension(rows, out_dir),
-        write_unit_intro(rows, out_dir),
-        write_end_of_unit(rows, out_dir),
-        write_portfolio(rows, out_dir),
-        write_check_understanding(rows, out_dir),
-        write_main_lesson(rows, out_dir),
-        write_bridge_vocab(rows, out_dir),
-        write_mistake_spotter(rows, out_dir),
+        write_full_extract(rows, out_dir),
         write_unit_cover(rows, out_dir),
+        write_vocab_vault(rows, out_dir),
+        write_mistake_spotter(rows, out_dir),
+        write_mini_practice(rows, out_dir),
+        write_check_understanding(rows, out_dir),
+        write_sub_unit_portfolio(rows, out_dir),
+        write_sub_unit_recap(rows, out_dir),
+        write_unit_intro(rows, out_dir),
+        write_end_of_unit_recap(rows, out_dir),
+        write_end_of_unit_portfolio(rows, out_dir),
     ]
     return paths

@@ -20,4 +20,5 @@ if %errorlevel% neq 0 (
 )
 
 python main.py %*
-pause
+rem keep the window open only when something went wrong
+if %errorlevel% neq 0 pause

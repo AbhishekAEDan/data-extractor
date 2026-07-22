@@ -1,4 +1,4 @@
-"""
+﻿"""
 updater.py
 
 Checks GitHub Releases for a newer version of the app. On startup the app
@@ -16,7 +16,7 @@ import re
 import urllib.request
 import webbrowser
 
-__version__ = "1.0.1"
+__version__ = "2.0.0"
 
 REPO = "AbhishekAEDan/data-extractor"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
@@ -59,3 +59,4 @@ def check_for_update(prompt=input, echo=print):
         echo("      Opened in your browser. Download the new version, then")
         echo("      copy your .env (API key) into the new folder.")
     return True
+

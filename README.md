@@ -33,6 +33,8 @@ Spotter, Unit Covers, Comprehension Texts, Portfolios and more.
   API is used *only* to classify section headings the parser doesn't
   recognise. It never touches your content.
 - 🖱️ **Drag & drop** — drop a file or a whole Term folder onto `run.bat`.
+- 🔄 **Live folder watch** — add or remove documents *while a run is going*;
+  the run rescans at the end and reconciles automatically.
 - 🔔 **Self-updating** — the app checks this repo's
   [Releases](https://github.com/AbhishekAEDan/data-extractor/releases) on
   startup and offers new versions automatically.
@@ -66,19 +68,21 @@ lands in this repo.
 
 ```
 output/
-├── ELA Main Lesson.csv
-├── ELA Mini Practice.csv
-├── ELA Bridge Back & Vocabulary Vault.csv
-├── ELA Mistake Spotter.csv
-├── ELA Unit Cover (Goals & By End Of Lesson Content).csv
-├── ELA Individual Sub Unit My Checklist, Quick Recap, Reflect.csv
-├── _ELA Main Comprehension Text.csv
-├── Unit Intro Page.csv
-├── ELA End Of Unit Portfolio Doc.csv
-├── ELA  Overall Portfolio Project.csv
-├── ELA Check Your Understanding Term 2.csv
-└── wide.csv          ← everything, one row per document (debugging)
+├── Unit Cover Page.csv
+├── Vocab Vault.csv
+├── Mistake Spotter.csv
+├── Mini Practice.csv
+├── Check Your Understanding.csv
+├── In Sub Unit Portfolio Proj.csv
+├── Sub Unit Recap.csv
+├── Unit Introduction.csv
+├── End of Unit Recap.csv
+├── End of Unit Portfolio.csv
+└── full_extract.csv   ← everything, one row per document (debugging)
 ```
+
+Layouts mirror the official spreadsheet templates one-to-one (the Main
+Lesson sheet is deliberately left to a human).
 
 ## 🧰 For tinkerers
 
@@ -86,7 +90,7 @@ output/
 |---|---|
 | `main.py` | console UI, menu, config |
 | `parser_core.py` | the deterministic .docx parser |
-| `writers.py` | shapes parsed rows into the 12 CSVs |
+| `writers.py` | shapes parsed rows into the output CSVs |
 | `judge.py` | AI heading classifier (+ deterministic hard rules) |
 | `updater.py` | GitHub release update check |
 | `bootstrap.py` / `checks.py` / `logger.py` | auto-install, env checks, run logs |

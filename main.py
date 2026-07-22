@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Lesson Table Extractor -- interactive console app.
 
@@ -292,8 +292,13 @@ def try_start_ollama():
         return True
     print("  Ollama not running -- attempting to start it...")
     try:
+        # DETACHED_PROCESS: don't tie ollama to this console window --
+        # otherwise the window can't close on exit until ollama is killed
+        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | \
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         subprocess.Popen(["ollama", "serve"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         stdin=subprocess.DEVNULL, creationflags=flags)
     except FileNotFoundError:
         print("  'ollama' command not found. Install/start Ollama manually.")
         return False
@@ -325,12 +330,12 @@ def handle_unknown_headings(cfg, label_files):
     print("\n  What should happen with these?")
     print("   1) Ask AI to decide which known column each one belongs to")
     print("   2) Ignore them -- keep known columns only")
-    print("      (their text still saved as extra columns in wide.csv)")
+    print("      (their text still saved as extra columns in full_extract.csv)")
     choice = input("\n  Choice [1/2]: ").strip()
     log(f"unknown headings: {labels}; user choice={choice}")
 
     if choice != "1":
-        print("  Skipping AI -- unknown headings kept as extra columns in wide.csv.")
+        print("  Skipping AI -- unknown headings kept as extra columns in full_extract.csv.")
         return {}   # remap keeps them as their own visible columns
 
     print("\n  Which AI decides?")
@@ -382,7 +387,8 @@ def run_extraction(cfg, sources):
 
     from logger import log
     rows, label_files = [], {}   # label -> [filenames it appears in]
-    for i, path in enumerate(files, 1):
+
+    def parse_one(path, i, n):
         name = os.path.relpath(path, root) if root else os.path.basename(path)
         try:
             found = set()
@@ -397,11 +403,35 @@ def run_extraction(cfg, sources):
             if row.get("has_image") == "yes":
                 flags.append("image")
             extra = f"   ({', '.join(flags)})" if flags else ""
-            print(f"  {progress_bar(i, len(files))}  {name}{extra}")
+            print(f"  {progress_bar(i, n)}  {name}{extra}")
             log(f"parsed {name}: {len(row)} fields, unknown={sorted(found)}")
         except Exception as e:
-            print(f"  {progress_bar(i, len(files))}  {name}  FAILED: {e}")
+            print(f"  {progress_bar(i, n)}  {name}  FAILED: {e}")
             log(f"PARSE FAILED {name}: {e}")
+
+    for i, path in enumerate(files, 1):
+        parse_one(path, i, len(files))
+
+    # the documents folder may have changed while parsing (docs added or
+    # removed mid-run) -- rescan and reconcile until the folder is stable
+    while True:
+        now = find_docx(sources)
+        removed = set(files) - set(now)
+        added = [f for f in now if f not in set(files)]
+        if removed:
+            gone = {os.path.basename(f) for f in removed}
+            rows = [r for r in rows if r.get("_file") not in gone]
+            print(f"\n  [update] {len(removed)} document(s) were removed "
+                  f"mid-run -- dropped from output: {', '.join(sorted(gone))}")
+            log(f"mid-run update: removed {sorted(gone)}")
+        files = now
+        if not added:
+            break
+        print(f"\n  [update] {len(added)} new document(s) appeared mid-run "
+              f"-- parsing them too...")
+        log(f"mid-run update: added {[os.path.basename(a) for a in added]}")
+        for i, path in enumerate(added, 1):
+            parse_one(path, i, len(added))
 
     mapping = handle_unknown_headings(cfg, label_files) if label_files else {}
     rows = [remap_unknown(r, mapping) for r in rows]
@@ -484,3 +514,4 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print("\nBye.")
+

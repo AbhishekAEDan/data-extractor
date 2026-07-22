@@ -90,8 +90,13 @@ def ensure_ollama_running():
         return True
     print("  [setup] Starting Ollama server...")
     try:
+        # DETACHED_PROCESS: don't tie ollama to this console window --
+        # otherwise the window can't close on exit until ollama is killed
+        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | \
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         subprocess.Popen(["ollama", "serve"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         stdin=subprocess.DEVNULL, creationflags=flags)
     except FileNotFoundError:
         return False
     for _ in range(20):

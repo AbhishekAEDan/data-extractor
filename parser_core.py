@@ -63,9 +63,11 @@ ORDER = ["_file", "_doc_type", "Unit Number", "Lesson Title", "My Goal",
          "Interactive / Simulation", "Portfolio Project", "End-of-Unit Inventory",
          "My Learning Checklist", "Quick Recap", "Reflect",
          # unit-level (Intro / End-of-Unit / Portfolio) columns
-         "Unit Title", "Top Content", "At End Of Unit Checklist",
+         "Unit Title", "Top Content", "Big Idea", "Essential Question",
+         "Role Call", "At End Of Unit Checklist",
          "Unit Learning Checklist", "Unit Quick Recap", "Unit Reflect",
-         "Project Title", "Purpose", "Portfolio Link", "What You Will Create",
+         "Project Title", "Project Name", "Purpose", "Project Link",
+         "Portfolio Link", "What You Will Create",
          "Materials", "Steps", "Template How To Fill", "Example",
          "Common Mistakes And Fixes", "Submission Checklist", "Optional Extension",
          "Motivation Reflection",
@@ -161,6 +163,49 @@ def match_label(text):
     return None
 
 
+# Some docs (e.g. unit 24) write section heads as plain numbered text --
+# "1) My Goal... My goal is..." -- with no bold at all. Detect a whitelist
+# label at the start of such a line; the rest of the line is inline content.
+_NUM_LEAD = re.compile(r'^\d{1,2}[).]\s+')
+
+# keys too generic to trust on an unnumbered, unbolded line ("Reflect:" etc.
+# appears inside portfolio/recap bodies)
+_INLINE_UNSAFE = {"reflect", "quick recap", "my learning checklist",
+                  "portfolio project", "end-of-unit inventory"}
+
+
+def inline_label(line):
+    """Return (column, inline_content) when a non-bold line starts with a
+    whitelisted label, else None."""
+    s = _NUM_LEAD.sub("", line)
+    numbered = s != line
+    if numbered:
+        low = s.lower()
+        for key, col in LABELS:
+            if low.startswith(key):
+                return col, s[len(key):].lstrip(" ,.:;!—–-……").strip()
+        return None
+    # unnumbered with a dash/colon separator: only a short exact-label lead,
+    # and only for labels that can't collide with body text
+    parts = re.split(r'[—–:]', s, 1)
+    if len(parts) == 2 and len(parts[0]) <= 40:
+        n = norm_label(parts[0])
+        for key, col in LABELS:
+            if key in _INLINE_UNSAFE:
+                continue
+            if n == key:
+                return col, parts[1].strip()
+        return None
+    # unnumbered, whole line IS the label (allowing a "(24.1)" style suffix,
+    # stripped by norm_label): definitely a heading, any key allowed
+    if len(s) <= 40:
+        n_full = norm_label(s)
+        for key, col in LABELS:
+            if n_full == key:
+                return col, ""
+    return None
+
+
 # a comprehension passage is titled with a genre lead, e.g.
 #   Prose Text: "..."   Poem: "..."   Drama Scene: "..."
 _COMP_TITLE_RE = re.compile(
@@ -186,6 +231,15 @@ def find_comprehension_title(doc):
                     return rest
                 continue
             return s
+    # colon-less variant: "Drama Josiah's Promise" -- genre word followed by
+    # a capitalised/quoted title on a short line
+    for p in doc.paragraphs:
+        for ln in p.text.split("\n"):
+            s = strip_bullet(ln.strip())
+            if len(s) <= 60 and re.match(
+                    r'^(?:prose text|poem|drama(?:\s+scene)?)\s+["“\'A-Z]',
+                    s, re.I) and not s[s.lower().find(' ') + 1].islower():
+                return s
     return ""
 
 
@@ -205,6 +259,7 @@ def split_sections(doc, unknown_labels):
     last_real_col = None
     in_mini = False          # inside the Mini Practice section
     in_main = False          # inside the Main Lesson section
+    in_portfolio = False     # inside the Portfolio Project section
     for p in paras[1:]:
         raw = p.text.strip()
         txt = strip_bullet(raw)
@@ -264,6 +319,14 @@ def split_sections(doc, unknown_labels):
                 current[1].append(txt)
             continue
 
+        # likewise inside Portfolio Project: a bold project-name card like
+        # "Word Class Crew Profile Card" is the project's content, not a new
+        # section (the portfolio writer picks the name out of the text)
+        if col is None and label_txt and bf >= 0.9 and in_portfolio:
+            if current is not None:
+                current[1].append(txt)
+            continue
+
         # a full-line bold label that isn't whitelisted: treat as unknown section
         if col is None and label_txt and bf >= 0.9 and len(label_txt) <= 60:
             unknown_labels.add(label_txt)
@@ -275,12 +338,36 @@ def split_sections(doc, unknown_labels):
                 current[1].append(f"[title] {sub}")
             continue
 
+        # non-bold section heads (unit-24 style docs): plain numbered
+        # "1) My Goal ...", dash-separated "Mini Practice – ..." or a bare
+        # whole-line label like "Quick Recap (24.1)"
+        if col is None and not label_txt and not is_list_item(p):
+            hit = inline_label(txt)
+            if hit:
+                col2, rest = hit
+                current = (col2, [])
+                sections.append(current)
+                last_real_col = col2
+                in_mini = (col2 == "Mini Practice")
+                in_main = (col2 == "Main Lesson")
+                in_portfolio = (col2 == "Portfolio Project")
+                if rest:
+                    # dash-separated rest is a subtitle; numbered-label rest
+                    # is inline content
+                    if not _NUM_LEAD.match(txt) and re.match(
+                            r'^[^:]*[—–]', txt):
+                        current[1].append(f"[title] {rest}")
+                    else:
+                        current[1].append(rest)
+                continue
+
         if col:
             current = (col, [])
             sections.append(current)
             last_real_col = col
             in_mini = (col == "Mini Practice")
             in_main = (col == "Main Lesson")
+            in_portfolio = (col == "Portfolio Project")
             if bf < 0.9:
                 rest = after_leading_bold(p)
                 if rest:
@@ -406,13 +493,51 @@ def parse_unit_intro(doc, path):
     m = re.match(r'^\s*unit\s+\d+\s*[—–-]\s*(.*)$', title_line, re.I)
     row["Unit Title"] = m.group(1).strip() if m else title_line
 
+    # top-content lines are labelled "Big Idea:", "Essential Question:",
+    # "Role Call: Master Communicators:" -- split them onto their own
+    # columns (label stripped, remainder verbatim); anything unlabelled
+    # stays in Top Content so nothing is dropped
+    intro_labels = [
+        (re.compile(r'^big idea\b\s*[:\-]?\s*', re.I),           "Big Idea"),
+        (re.compile(r'^essential question\b\s*[:\-]?\s*', re.I), "Essential Question"),
+        # "Role Call: Master Communicators:" / "Role Call: Word Class Crew"
+        # -- keep the crew name, it is part of the content
+        (re.compile(r'^role call\s*[:\-]\s*', re.I),             "Role Call"),
+    ]
     top, checklist = [], []
+    cur = None                       # column of the last labelled line
     in_checklist = False
     for p in paras[1:]:
-        txt = strip_bullet(p.text.strip())
-        if not in_checklist and re.match(r'^at the end of unit\b', txt, re.I):
-            in_checklist = True
-        (checklist if in_checklist else top).append(txt)
+        for ln in p.text.split("\n"):
+            txt = strip_bullet(ln.strip())
+            if not txt:
+                continue
+            if not in_checklist and re.match(r'^at the end of unit\b', txt, re.I):
+                in_checklist = True
+                # some units keep the first checklist items on the heading
+                # line itself -- strip only the heading words, keep the rest
+                rest = re.sub(r'^at the end of unit[^,]*,?\s*'
+                              r'i will be able to\W*\s*', '', txt, flags=re.I)
+                if rest.strip():
+                    checklist.append(rest.strip())
+                continue
+            if in_checklist:
+                checklist.append(txt)
+                continue
+            hit = None
+            for rx, col in intro_labels:
+                m = rx.match(txt)
+                if m:
+                    hit = (col, txt[m.end():].strip())
+                    break
+            if hit:
+                cur = hit[0]
+                row[cur] = (row.get(cur, "") + "\n" + hit[1]).strip() \
+                    if row.get(cur) else hit[1]
+            elif cur:                # continuation of the labelled block
+                row[cur] = (row[cur] + "\n" + txt).strip()
+            else:
+                top.append(txt)
     row["Top Content"] = "\n".join(top).strip()
     row["At End Of Unit Checklist"] = "\n".join(checklist).strip()
     return row
@@ -453,8 +578,8 @@ def parse_end_of_unit(doc, path):
 # regex consumes only the label; text after match.end() is inline content.
 # Order matters -- more specific labels first.
 _PORTFOLIO_SECTIONS = [
-    (re.compile(r'^project name[:\-]?\s*', re.I),           "Project Title"),
-    (re.compile(r'^purpose link[:\-]?\s*', re.I),           "Purpose"),
+    (re.compile(r'^project name[:\-]?\s*', re.I),           "Project Name"),
+    (re.compile(r'^(?:purpose|project) link[:\-]?\s*', re.I), "Project Link"),
     (re.compile(r'^purpose[:\-]?\s*', re.I),                "Purpose"),
     (re.compile(r'^portfolio link[:\-]?\s*', re.I),         "Portfolio Link"),
     (re.compile(r'^what you will create[:\-]?\s*', re.I),   "What You Will Create"),
@@ -560,11 +685,13 @@ def parse_portfolio(doc, path):
             out["Motivation Reflection"] = mot[:mk.start()].strip()
             out["Unit Reflect"] = mot[mk.end():].strip()
 
-    # project name is occasionally only in the document title line
-    if not out.get("Project Title") and paras:
-        t = re.sub(r'^\s*portfolio project\s*\d*\s*[:—–-]?\s*', "",
+    # the project title lives in the document title line, e.g.
+    # "Unit 1 Portfolio Project: The Junior Reporter's Profile Pack"
+    if paras:
+        t = re.sub(r'^\s*(?:unit\s+\d+\s+)?portfolio project\s*'
+                   r'(?:\d+|unit\s*\d+)?\s*[:—–-]?\s*', "",
                    paras[0].text.strip(), flags=re.I).strip()
-        if t:
+        if t and not out.get("Project Title"):
             out["Project Title"] = t
 
     row.update(out)

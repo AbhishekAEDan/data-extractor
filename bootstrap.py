@@ -18,7 +18,10 @@ import tempfile
 import time
 import urllib.request
 
-PIP_PACKAGES = [("docx", "python-docx"), ("google.genai", "google-genai")]
+PIP_PACKAGES = [("docx", "python-docx"), ("google.genai", "google-genai"),
+                # openpyxl writes the formatted IT .xlsx sheets; PIL is what
+                # openpyxl needs to embed pictures into Image cells
+                ("openpyxl", "openpyxl"), ("PIL", "pillow")]
 OLLAMA_SETUP_URL = "https://ollama.com/download/OllamaSetup.exe"
 
 

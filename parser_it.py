@@ -33,6 +33,8 @@ import os
 import re
 
 from docx import Document
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 
 from parser_core import bold_fraction, strip_bullet, detect_images
 
@@ -164,9 +166,16 @@ class ListFormatter:
         return f"{n}.", ilvl            # decimal and friends
 
 
-def _para_images(p):
-    """Return ['[IMAGE: alt text]'] lines for pictures embedded in the
-    paragraph (alt text kept when the author set one)."""
+def _para_images(p, doc=None):
+    """Pictures embedded in the paragraph, in document order.
+
+    Returns a list of ``(marker_line, blob, ext)`` tuples. ``marker_line`` is
+    the '[IMAGE: alt text]' placeholder that goes into the section text (alt
+    text kept when the author set one) -- unchanged from before. ``blob`` is
+    the raw image bytes and ``ext`` its extension ('.png'), resolved through
+    the run's ``a:blip/@r:embed`` relationship id against
+    ``doc.part.related_parts``; both are ``None`` when the binary cannot be
+    reached (so the marker-only behaviour still holds)."""
     out = []
     try:
         drawings = p._p.xpath('.//w:drawing')
@@ -175,8 +184,79 @@ def _para_images(p):
     for d in drawings:
         descr = d.xpath('.//wp:docPr/@descr') or d.xpath('.//wp:docPr/@name')
         note = (descr[0].strip() if descr and descr[0].strip() else "")
-        out.append(f"[IMAGE: {note}]" if note else "[IMAGE]")
+        marker = f"[IMAGE: {note}]" if note else "[IMAGE]"
+        blob = ext = None
+        if doc is not None:
+            try:
+                rids = d.xpath('.//a:blip/@r:embed')
+                if rids:
+                    part = doc.part.related_parts[rids[0]]
+                    blob = part.blob
+                    ext = "." + str(getattr(part, "ext", "png")).lstrip(".")
+            except Exception:
+                blob = ext = None
+        out.append((marker, blob, ext))
     return out
+
+
+def _iter_body(doc):
+    """Yield the document body's top-level Paragraph and Table objects in
+    document order, so a table lands in whichever section precedes it.
+    Paragraphs nested inside table cells are NOT yielded (they belong to the
+    table's own marker line)."""
+    it = getattr(doc, "iter_inner_content", None)
+    if callable(it):
+        for item in it():
+            yield item
+        return
+    for el in doc.element.body.iterchildren():
+        tag = el.tag.split("}")[-1]
+        if tag == "p":
+            yield Paragraph(el, doc)
+        elif tag == "tbl":
+            yield Table(el, doc)
+
+
+def table_marker(tbl):
+    """Render a Word table as ONE verbatim marker line:
+    '[TABLE: a | b | c || d | e | f]'. Cell text is stripped but never
+    rewritten; fully-empty rows are skipped. Returns '' for an empty table."""
+    rows = []
+    for row in tbl.rows:
+        try:
+            cells = row.cells
+        except Exception:
+            continue
+        texts, seen = [], []
+        for c in cells:
+            # merged cells are repeated by python-docx: the SAME cell object
+            # (same underlying tc element) appearing twice in a row is one cell
+            tc = getattr(c, "_tc", None)
+            if seen and tc is not None and seen[-1] is tc:
+                continue
+            seen.append(tc)
+            texts.append(re.sub(r'\s+', ' ', c.text).strip())
+        if not any(texts):
+            continue
+        rows.append(" | ".join(texts))
+    if not rows:
+        return ""
+    return "[TABLE: " + " || ".join(rows) + "]"
+
+
+def table_required_marker(path):
+    """The visible placeholder that rides IN the paragraph flow at the exact
+    position a Word table sat, wrapped so writers can find it unambiguously:
+
+        [TABLE-REQ: TABLE REQUIRED - see Netiquette.docx (Term 1)]
+
+    The term comes from the document's parent folder under documents/; a
+    folder that is not a "Term ..." folder is still named, and no folder at
+    all means no parenthetical."""
+    name = os.path.basename(path)
+    folder = os.path.basename(os.path.dirname(os.path.abspath(path)))
+    where = f" ({folder})" if folder and folder.lower() != "documents" else ""
+    return f"[TABLE-REQ: TABLE REQUIRED – see {name}{where}]"
 
 
 def match_it_section(text):
@@ -289,8 +369,6 @@ def parse_it_docx(path, unknown_labels=None):
         except Exception:
             return False
 
-    paras = [p for p in doc.paragraphs if p.text.strip() or _has_drawing(p)]
-
     sections = {}          # canonical name -> [lines]
     title_block = []       # lines before the first section heading
     misc = []
@@ -304,7 +382,21 @@ def parse_it_docx(path, unknown_labels=None):
 
     listfmt = ListFormatter(doc)
 
-    for p in paras:
+    for item in _iter_body(doc):
+        # Word tables: one marker line, attached to the current section (or
+        # the title block) exactly like any other line
+        if isinstance(item, Table):
+            marker_line = table_marker(item)
+            if marker_line:
+                # the [TABLE:] marker is pulled out to the sheet's Table
+                # column later; the [TABLE-REQ:] placeholder stays in the
+                # paragraph flow so the cell shows where the table belongs
+                add(marker_line)
+                add(table_required_marker(path))
+            continue
+        p = item
+        if not (p.text.strip() or _has_drawing(p)):
+            continue
         style = (p.style.name or "").lower()
         marker, ilvl = listfmt.marker(p)
         first_line = True
@@ -330,17 +422,20 @@ def parse_it_docx(path, unknown_labels=None):
                 continue
             hit = None
             m = _TOP_NUM.match(txt)
-            # list items are never section headings
-            heading_p = not marker and _is_heading(p, txt)
-            # an unnumbered bold label ending with ':' inside a section is a
-            # sub-label ("Guided Practice:" inside Answers & Solutions), not
-            # a new section
-            sub_label = (current is not None and not m
-                         and txt.rstrip().endswith(":"))
-            if heading_p and not _SUB_NUM.match(txt) and not sub_label:
+            # some documents number their section headings via Word list
+            # formatting -- a bold/styled list item naming a known section is
+            # a heading; list items matching nothing stay content
+            heading_p = _is_heading(p, txt)
+            if heading_p and not _SUB_NUM.match(txt):
                 # numbered heading or a styled/bold heading naming a section
                 cand = m.group(2) if m else txt
                 hit = match_it_section(cand)
+                # an unnumbered bold label ending with ':' that names no
+                # known section is a sub-label inside the current section
+                # ("Correct state:", "Steps:"), never an unknown section
+                if (hit is None and current is not None and not m
+                        and txt.rstrip().endswith(":")):
+                    cand = None
                 # a numbered STYLE heading (Heading 1/2) that matches nothing
                 # is an unknown section; plain-bold numbered lines inside a
                 # section are content (e.g. "1. Dust" in Key Concepts)
@@ -375,9 +470,13 @@ def parse_it_docx(path, unknown_labels=None):
                     sections[current].append(rest)
                 continue
             add(fmt_line)
-        # pictures embedded in this paragraph stay with its section
-        for img in _para_images(p):
-            add(img)
+        # pictures embedded in this paragraph stay with its section; the
+        # binaries ride along on the row so the writer can embed them
+        for marker, blob, ext in _para_images(p, doc):
+            add(marker)
+            if blob:
+                row.setdefault("_image_files", []).append(
+                    {"marker": marker, "blob": blob, "ext": ext or ".png"})
 
     parse_title_block(title_block, path, row)
 

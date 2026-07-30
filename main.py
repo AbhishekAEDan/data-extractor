@@ -4,7 +4,7 @@ Lesson Table Extractor -- interactive console app.
 
 Put .docx lesson files in ./documents, run run.bat (or `python main.py`),
 pick an engine (Qwen via Ollama, or Gemini) for the judge step, run the
-extraction. Output CSVs land in ./output.
+extraction. Output sheets land in ./output.
 
 Extraction itself is a deterministic verbatim parser; the selected AI engine
 is ONLY used to classify unrecognised section headings -- it never rewrites

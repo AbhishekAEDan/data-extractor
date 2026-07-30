@@ -25,7 +25,7 @@ import urllib.request
 import webbrowser
 import zipfile
 
-__version__ = "3.1.0"
+__version__ = "3.2.0"
 
 REPO = "AbhishekAEDan/data-extractor"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"

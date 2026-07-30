@@ -9,7 +9,7 @@
        D A T A   E X T R A C T O R
 </pre>
 
-### 📚 Turns ELA **and IT** lesson `.docx` files into clean CSV spreadsheets — fast, verbatim, no hallucination.
+### 📚 Turns ELA **and IT** lesson `.docx` files into clean Excel spreadsheets — fast, verbatim, no hallucination.
 
 Made with ❤️ by **[AbhishekAEDan](https://github.com/AbhishekAEDan)**
 
@@ -23,7 +23,7 @@ Made with ❤️ by **[AbhishekAEDan](https://github.com/AbhishekAEDan)**
 
 ## ✨ What it does
 
-Feed it a folder of lesson documents. Get back a set of ready-to-import CSV
+Feed it a folder of lesson documents. Get back a set of ready-to-import .xlsx
 spreadsheets that mirror the official templates one-to-one.
 
 - 🎓 **Two subjects, one app** — pick **ELA** or **IT**, or let the app
@@ -59,7 +59,7 @@ spreadsheets that mirror the official templates one-to-one.
 3. Double-click **`run.bat`** (or run `python main.py`).
 4. Check the **Subject** line in the header. It auto-detects; override it
    any time with **`2) Select subject`**.
-5. Pick **`1) Run extraction`**. ☕ Sip something. CSVs land in `output/`.
+5. Pick **`1) Run extraction`**. ☕ Sip something. Spreadsheets land in `output/`.
 
 > 🐍 Needs Python 3.9+. Missing packages auto-install on first run.
 
@@ -86,35 +86,35 @@ Which sheets you get depends on the subject.
 <tr valign="top"><td>
 
 ```
-Unit Cover Page.csv
-Vocab Vault.csv
-Mistake Spotter.csv
-Mini Practice.csv
-Check Your Understanding.csv
-In Sub Unit Portfolio Proj.csv
-Sub Unit Recap.csv
-Unit Introduction.csv
-End of Unit Recap.csv
-End of Unit Portfolio.csv
+Unit Cover Page.xlsx
+Vocab Vault.xlsx
+Mistake Spotter.xlsx
+Mini Practice.xlsx
+Check Your Understanding.xlsx
+In Sub Unit Portfolio Proj.xlsx
+Sub Unit Recap.xlsx
+Unit Introduction.xlsx
+End of Unit Recap.xlsx
+End of Unit Portfolio.xlsx
 full_extract.csv
 ```
 
 </td><td>
 
 ```
-Unit cover page & Learning Objective.csv
-Introduction Topic Overview.csv
-Key Concepts (Main Content).csv
-Practical Activity (Hands-On).csv
-Guided Practice (With Support).csv
-Independent Practice.csv
-Challenge Higher-Order Thinking.csv
-Knowledge Check (Quick Assessment).csv
-Common Mistakes & Tips.csv
-Real-World Application.csv
-Summary Key Takeaways.csv
-Answer Solution.csv
-Suggested Interactive Moments.csv
+Unit cover page & Learning Objective.xlsx
+Introduction Topic Overview.xlsx
+Key Concepts (Main Content).xlsx
+Practical Activity (Hands-On).xlsx
+Guided Practice (With Support).xlsx
+Independent Practice.xlsx
+Challenge Higher-Order Thinking.xlsx
+Knowledge Check (Quick Assessment).xlsx
+Common Mistakes & Tips.xlsx
+Real-World Application.xlsx
+Summary Key Takeaways.xlsx
+Answer Solution.xlsx
+Suggested Interactive Moments.xlsx
 full_extract.csv
 ```
 
@@ -133,9 +133,9 @@ side the Main Lesson sheet is deliberately left to a human).
 |---|---|
 | `main.py` | console UI, menu, config, subject routing |
 | `parser_core.py` | the deterministic ELA .docx parser |
-| `writers.py` | shapes parsed ELA rows into the output CSVs |
+| `writers.py` | shapes parsed ELA rows into the output sheets |
 | `parser_it.py` | the deterministic IT .docx parser (+ subject detection) |
-| `writers_it.py` | shapes parsed IT rows into the output CSVs |
+| `writers_it.py` | shapes parsed IT rows into the output sheets |
 | `judge.py` | AI heading classifier (+ deterministic hard rules) |
 | `updater.py` | GitHub release update check |
 | `bootstrap.py` / `checks.py` / `logger.py` | auto-install, env checks, run logs |

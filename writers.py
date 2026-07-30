@@ -1,30 +1,35 @@
 """
 writers.py
 
-Writes the parsed rows to CSV files. Output layouts mirror the official
-"Updated Spread Sheets" workbooks (one CSV per sheet, headers copied exactly
-from the templates -- including their spacing/typo quirks, e.g. "Vocab
-Vault  1", "Unit Number " and "Porject Title"):
+Writes the parsed rows to formatted .xlsx workbooks. Output layouts mirror the
+official "Updated Spread Sheets" workbooks (one sheet file per template sheet,
+headers copied exactly from the templates -- including their spacing/typo
+quirks, e.g. "Vocab Vault  1", "Unit Number " and "Porject Title"):
 
   main doc sheets (one row per sub-unit lesson):
-    Unit Cover Page.csv
-    Vocab Vault.csv
-    Mistake Spotter.csv
-    Mini Practice.csv
-    Check Your Understanding.csv
-    In Sub Unit Portfolio Proj.csv
-    Sub Unit Recap.csv
+    Unit Cover Page.xlsx
+    Vocab Vault.xlsx
+    Mistake Spotter.xlsx
+    Mini Practice.xlsx
+    Check Your Understanding.xlsx
+    In Sub Unit Portfolio Proj.xlsx
+    Sub Unit Recap.xlsx
     (Main Lesson sheet is intentionally NOT produced -- filled by a human)
 
   unit-level sheets:
-    Unit Introduction.csv          (per Unit N Introduction doc)
-    End of Unit Recap.csv          (per End of Unit N doc)
-    End of Unit Portfolio.csv      (per End of Unit N Portfolio doc)
+    Unit Introduction.xlsx          (per Unit N Introduction doc)
+    End of Unit Recap.xlsx          (per End of Unit N doc)
+    End of Unit Portfolio.xlsx      (per End of Unit N Portfolio doc)
 
   extras:
     full_extract.csv                  (debug: every parsed field, one row
                                        per document; formerly wide.csv --
                                        comprehension fields live here too)
+
+The xlsx formatting machinery (bold frozen header row, wrapped top-aligned
+cells, column widths, the text-formatted Unit Number column that keeps "3.10"
+from collapsing to 3.1) lives in `xlsx_out.py` and is shared with the IT
+writer (`writers_it.py`). full_extract.csv stays CSV.
 
 All values are verbatim slices from the parser -- no rewriting happens here.
 
@@ -37,6 +42,7 @@ import os
 import re
 
 from parser_core import ORDER, _match_portfolio_section, strip_bullet
+from xlsx_out import write_xlsx
 
 
 # ---------- helpers ----------
@@ -48,20 +54,6 @@ def order_cols(rows):
             if k not in cols:
                 cols.append(k)
     return cols
-
-
-def write_csv(path, header, data_rows):
-    """Write one template sheet. The first column is always Unit Number:
-    it is wrapped as ="3.10" so Excel keeps it as text -- otherwise Excel
-    coerces 3.10 to the number 3.1 and the trailing zero is lost."""
-    with open(path, "w", newline="", encoding="utf-8-sig") as fh:
-        w = csv.writer(fh)
-        w.writerow(header)
-        for r in data_rows:
-            r = list(r)
-            if r and r[0] not in ("", None):
-                r[0] = f'="{r[0]}"'
-            w.writerow(r)
 
 
 def unit_sort_key(unit):
@@ -101,8 +93,8 @@ def write_unit_cover(rows, out_dir):
              r.get("My Goal", ""), r.get("Lesson Objectives", ""),
              r.get("Bridge Back", "")]
             for r in _rows_of_type(rows, "lesson")]
-    path = os.path.join(out_dir, "Unit Cover Page.csv")
-    write_csv(path, header, data)
+    path = os.path.join(out_dir, "Unit Cover Page.xlsx")
+    write_xlsx(path, header, data)
     return path
 
 
@@ -129,8 +121,8 @@ def write_vocab_vault(rows, out_dir):
             cells = cells[:9] + ["\n".join(cells[9:])]
         cells += [""] * (10 - len(cells))
         data.append([r.get("Unit Number", "")] + cells)
-    path = os.path.join(out_dir, "Vocab Vault.csv")
-    write_csv(path, header, data)
+    path = os.path.join(out_dir, "Vocab Vault.xlsx")
+    write_xlsx(path, header, data)
     return path
 
 
@@ -187,8 +179,8 @@ def write_mistake_spotter(rows, out_dir):
             if any(g.get(c) for c in _MS_COLS):
                 data.append([r.get("Unit Number", "")]
                             + [g.get(c, "") for c in _MS_COLS])
-    path = os.path.join(out_dir, "Mistake Spotter.csv")
-    write_csv(path, header, data)
+    path = os.path.join(out_dir, "Mistake Spotter.xlsx")
+    write_xlsx(path, header, data)
     return path
 
 
@@ -214,8 +206,8 @@ def write_mini_practice(rows, out_dir):
             r.get("What to look for", ""),
             r.get("Practice A", ""), r.get("Practice B", ""), part_c,
         ])
-    path = os.path.join(out_dir, "Mini Practice.csv")
-    write_csv(path, header, data)
+    path = os.path.join(out_dir, "Mini Practice.xlsx")
+    write_xlsx(path, header, data)
     return path
 
 
@@ -300,8 +292,8 @@ def write_check_understanding(rows, out_dir):
         if preface:
             qs[0] = join_nonempty(preface, qs[0])
         data.append([r.get("Unit Number", "")] + qs + ans)
-    path = os.path.join(out_dir, "Check Your Understanding.csv")
-    write_csv(path, header, data)
+    path = os.path.join(out_dir, "Check Your Understanding.xlsx")
+    write_xlsx(path, header, data)
     return path
 
 
@@ -360,8 +352,8 @@ def write_sub_unit_portfolio(rows, out_dir):
             p["What You Will Create"] = join_nonempty(
                 "Purpose: " + p["Purpose"], p.get("What You Will Create", ""))
         data.append([r.get("Unit Number", "")] + [p.get(f, "") for f in field])
-    path = os.path.join(out_dir, "In Sub Unit Portfolio Proj.csv")
-    write_csv(path, header, data)
+    path = os.path.join(out_dir, "In Sub Unit Portfolio Proj.xlsx")
+    write_xlsx(path, header, data)
     return path
 
 
@@ -373,8 +365,8 @@ def write_sub_unit_recap(rows, out_dir):
             for r in _rows_of_type(rows, "lesson")
             if any([r.get("My Learning Checklist"), r.get("Quick Recap"),
                     r.get("Reflect")])]
-    path = os.path.join(out_dir, "Sub Unit Recap.csv")
-    write_csv(path, header, data)
+    path = os.path.join(out_dir, "Sub Unit Recap.xlsx")
+    write_xlsx(path, header, data)
     return path
 
 
@@ -388,8 +380,8 @@ def write_unit_intro(rows, out_dir):
              r.get("Big Idea", ""), r.get("Essential Question", ""),
              r.get("Role Call", ""), r.get("At End Of Unit Checklist", "")]
             for r in _rows_of_type(rows, "unit_intro")]
-    path = os.path.join(out_dir, "Unit Introduction.csv")
-    write_csv(path, header, data)
+    path = os.path.join(out_dir, "Unit Introduction.xlsx")
+    write_xlsx(path, header, data)
     return path
 
 
@@ -401,8 +393,8 @@ def write_end_of_unit_recap(rows, out_dir):
     data = [[r.get("Unit Number", ""), r.get("Unit Learning Checklist", ""),
              r.get("Unit Quick Recap", ""), r.get("Unit Reflect", "")]
             for r in _rows_of_type(rows, "end_of_unit")]
-    path = os.path.join(out_dir, "End of Unit Recap.csv")
-    write_csv(path, header, data)
+    path = os.path.join(out_dir, "End of Unit Recap.xlsx")
+    write_xlsx(path, header, data)
     return path
 
 
@@ -426,8 +418,8 @@ def write_end_of_unit_portfolio(rows, out_dir):
     data = []
     for r in _rows_of_type(rows, "end_of_unit_portfolio"):
         data.append([r.get("Unit Number", "")] + [r.get(f, "") for f in field])
-    path = os.path.join(out_dir, "End of Unit Portfolio.csv")
-    write_csv(path, header, data)
+    path = os.path.join(out_dir, "End of Unit Portfolio.xlsx")
+    write_xlsx(path, header, data)
     return path
 
 

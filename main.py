@@ -33,7 +33,10 @@ DEFAULT_CONFIG = {
     "engine": "ollama",                       # "ollama" | "gemini"
     "ollama_model": "qwen3:4b-instruct",
     "gemini_model": "gemini-3.1-flash-lite",
+    "subject": "auto",                        # "auto" | "ela" | "it"
 }
+
+SUBJECT_NAMES = {"ela": "ELA", "it": "IT"}
 
 
 # ---------- config / env ----------
@@ -237,6 +240,37 @@ def find_docx(sources):
     return sorted(dict.fromkeys(out))
 
 
+_SUBJECT_CACHE = {}   # tuple(files) -> detected subject
+
+
+def resolve_subject(cfg, sources, files=None):
+    """Return (subject, how). how = 'set' when picked in the menu,
+    'auto' when detected from the documents, '?' when unknown."""
+    if cfg.get("subject", "auto") in ("ela", "it"):
+        return cfg["subject"], "set"
+    if files is None:
+        files = find_docx(sources)
+    key = tuple(files[:4])
+    if key not in _SUBJECT_CACHE:
+        try:
+            from parser_it import detect_subject
+            _SUBJECT_CACHE[key] = detect_subject(files)[0]
+        except Exception:
+            _SUBJECT_CACHE[key] = ""
+    det = _SUBJECT_CACHE[key]
+    return (det, "auto") if det else ("ela", "?")
+
+
+def subject_line(cfg, sources):
+    subj, how = resolve_subject(cfg, sources)
+    name = SUBJECT_NAMES.get(subj, subj.upper())
+    if how == "set":
+        return name
+    if how == "auto":
+        return f"{name}  (auto-detected)"
+    return f"{name}  (auto: could not detect, defaulting)"
+
+
 def banner(cfg, key, sources):
     n = len(find_docx(sources))
     if sources == [DOCS_DIR]:
@@ -250,6 +284,7 @@ def banner(cfg, key, sources):
     print("=" * w)
     print(f"  Documents : {docs_msg}")
     print(f"  Engine    : {engine.upper()}  ({model})")
+    print(f"  Subject   : {subject_line(cfg, sources)}")
     print(f"  Gemini key: {'set (...' + key[-6:] + ')' if key else 'NOT SET'}")
     print(f"  Output    : {OUT_DIR}")
     print("=" * w)
@@ -293,6 +328,26 @@ def menu_engine(cfg):
             return
 
 
+def menu_subject(cfg, sources):
+    while True:
+        clear()
+        print("--- Select subject (which spreadsheet layouts to produce) ---\n")
+        print(f"  Current: {subject_line(cfg, sources)}\n")
+        print("  1) Auto-detect from the documents (recommended)")
+        print("  2) ELA  (Vocab Vault / Mini Practice / Portfolio sheets)")
+        print("  3) IT   (Key Concepts / Practical Activity / Knowledge Check sheets)")
+        print("  0) Back")
+        c = input("\n  Choice: ").strip()
+        if c in ("1", "2", "3"):
+            cfg["subject"] = {"1": "auto", "2": "ela", "3": "it"}[c]
+            save_config(cfg)
+            print(f"\n  Subject set to {cfg['subject'].upper()}.")
+            time.sleep(1)
+            return
+        if c == "0":
+            return
+
+
 def menu_api_key():
     clear()
     print("--- Change Gemini API key ---\n")
@@ -314,7 +369,11 @@ def run_checks(cfg, sources, verbose=True):
     n = len(find_docx(sources))
     results.append((n > 0, f"{n} .docx file(s) ready" if n else
                     "no .docx files found (documents\\ or dragged path)"))
-    if cfg["engine"] == "ollama":
+    # the AI engine only judges odd ELA headings -- IT runs are fully
+    # deterministic, so engine problems must not block them
+    if resolve_subject(cfg, sources)[0] == "it":
+        pass
+    elif cfg["engine"] == "ollama":
         ok_srv, msg = check_ollama_server()
         results.append((ok_srv, msg))
         if ok_srv:
@@ -425,10 +484,17 @@ def run_extraction(cfg, sources):
         return
 
     from parser_core import parse_docx, remap_unknown
+    from parser_it import parse_it_docx
     from writers import write_all
+    from writers_it import write_all_it
 
     files = find_docx(sources)
+    subject, how = resolve_subject(cfg, sources, files)
+    parse_fn = parse_it_docx if subject == "it" else parse_docx
     root = sources[0] if len(sources) == 1 and os.path.isdir(sources[0]) else None
+    tag = "picked in menu" if how == "set" else (
+        "auto-detected" if how == "auto" else "default -- could not detect")
+    print(f"  Subject: {SUBJECT_NAMES.get(subject, subject.upper())} ({tag})")
     print(f"  Parsing {len(files)} document(s)...\n")
     t0 = time.time()
 
@@ -444,7 +510,7 @@ def run_extraction(cfg, sources):
             name = os.path.basename(path)
         try:
             found = set()
-            row = parse_docx(path, found)
+            row = parse_fn(path, found)
             row["_folder"] = os.path.basename(os.path.dirname(path))
             rows.append(row)
             for lb in found:
@@ -485,10 +551,19 @@ def run_extraction(cfg, sources):
         for i, path in enumerate(added, 1):
             parse_one(path, i, len(added))
 
-    mapping = handle_unknown_headings(cfg, label_files) if label_files else {}
-    rows = [remap_unknown(r, mapping) for r in rows]
-
-    paths = write_all(rows, OUT_DIR)
+    if subject == "it":
+        # IT columns are fixed by section name -- no AI judge needed;
+        # unknown numbered headings stay as their own columns in full_extract
+        if label_files:
+            labels = sorted(label_files)
+            print(f"\n  [i] {len(labels)} unrecognised section heading(s) kept "
+                  f"as extra columns in full_extract.csv: "
+                  + ", ".join(f'"{l}"' for l in labels))
+        paths = write_all_it(rows, OUT_DIR)
+    else:
+        mapping = handle_unknown_headings(cfg, label_files) if label_files else {}
+        rows = [remap_unknown(r, mapping) for r in rows]
+        paths = write_all(rows, OUT_DIR)
     dt = time.time() - t0
     print(f"\n  Done: {len(rows)} row(s) in {dt:.1f}s. Output files:")
     for p in paths:
@@ -533,29 +608,32 @@ def main():
         clear()
         banner(cfg, load_api_key(), sources)
         print("\n  1) Run extraction")
-        print("  2) Select engine (Qwen local / Gemini API)")
-        print("  3) Change Gemini API key")
-        print("  4) Check / auto-install requirements")
-        print("  5) Open output folder")
-        print("  6) Open documents folder")
+        print("  2) Select subject (Auto / ELA / IT)")
+        print("  3) Select engine (Qwen local / Gemini API)")
+        print("  4) Change Gemini API key")
+        print("  5) Check / auto-install requirements")
+        print("  6) Open output folder")
+        print("  7) Open documents folder")
         print("  0) Exit")
         c = input("\n  Choice: ").strip()
         if c == "1":
             run_extraction(cfg, sources)
             cfg = load_config()
         elif c == "2":
-            menu_engine(cfg)
+            menu_subject(cfg, sources)
         elif c == "3":
-            menu_api_key()
+            menu_engine(cfg)
         elif c == "4":
+            menu_api_key()
+        elif c == "5":
             clear()
             print("--- Requirement checks ---")
             auto_setup(cfg)
             run_checks(cfg, sources)
             pause()
-        elif c == "5":
-            open_output()
         elif c == "6":
+            open_output()
+        elif c == "7":
             os.startfile(DOCS_DIR)  # noqa
         elif c == "0":
             return

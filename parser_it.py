@@ -456,6 +456,16 @@ def parse_it_docx(path, unknown_labels=None):
                 sections[current].append(fmt_line)
                 continue
             if hit:
+                # A section the parser already filled, left, and is now
+                # entering AGAIN is the signature of a document holding two
+                # full copies of the lesson (Computer Care.docx). Remember
+                # the line index the second copy starts at so the writer can
+                # drop the draft without guessing. Only a real section switch
+                # reaches here -- the Answers & Solutions restatement guard
+                # above has already skipped plain-bold sub-block labels.
+                if hit != current and sections.get(hit):
+                    row.setdefault("_refilled", {}).setdefault(
+                        hit, len(sections[hit]))
                 current = hit
                 sections.setdefault(current, [])
                 # heading may carry an inline title, e.g.

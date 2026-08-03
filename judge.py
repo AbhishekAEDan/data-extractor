@@ -6,7 +6,7 @@ columns. The judge never sees or rewrites document content, so extraction
 stays verbatim regardless of which engine is used.
 
 Engines:
-  - ollama : local model via http://localhost:11434 (default qwen3:4b-instruct)
+  - ollama : local model via http://localhost:11434 (default qwen3:8b)
   - gemini : gemini flash-lite via google-genai SDK
 
 Author: AbhishekAEDan
@@ -15,6 +15,7 @@ __author__ = "AbhishekAEDan"
 
 import json
 import re
+import urllib.error
 import urllib.request
 
 from parser_core import CANONICAL_COLUMNS
@@ -133,7 +134,7 @@ def run_judge(labels, engine, ollama_model=None, gemini_key=None, gemini_model=N
         return mapped
     try:
         if engine == "ollama":
-            ai = judge_ollama(rest, ollama_model or "qwen3:4b-instruct")
+            ai = judge_ollama(rest, ollama_model or "qwen3:8b")
         else:
             ai = judge_gemini(rest, gemini_key, gemini_model or "gemini-3.1-flash-lite")
     except Exception as e:
@@ -141,3 +142,77 @@ def run_judge(labels, engine, ollama_model=None, gemini_key=None, gemini_model=N
         ai = {}
     mapped.update(ai)
     return mapped
+
+
+# ---------- generic one-shot AI helper ----------
+#
+# Used by the IT writers to resolve the odd structural ambiguity (e.g. where
+# inside a run-on paragraph a "Tip" actually begins). The reply is only ever
+# used to LOCATE a split point -- callers must slice their own text, never
+# substitute the model's words, so extraction stays verbatim by construction.
+
+AI_DECIDE_TIMEOUT = 30
+
+
+def _ai_ollama_once(payload, timeout):
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(f"{OLLAMA_URL}/api/generate", data=body,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode())
+    return data.get("response", "")
+
+
+def _ai_ollama(prompt, model, timeout):
+    """One short locate-a-split-point call.
+
+    `think: false` disables the chain-of-thought of thinking models (qwen3),
+    which otherwise burn the whole timeout before emitting an answer, and
+    `num_predict` caps the reply -- callers only ever need one line back.
+    Older Ollama builds reject the unknown `think` field, so the call is
+    retried once without it."""
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "think": False,
+        "options": {"temperature": 0, "num_predict": 200},
+    }
+    try:
+        return _ai_ollama_once(payload, timeout)
+    except urllib.error.HTTPError:
+        payload.pop("think", None)
+        return _ai_ollama_once(payload, timeout)
+
+
+def _ai_gemini(prompt, api_key, model):
+    from google import genai
+    from google.genai import types
+    client = genai.Client(api_key=api_key)
+    resp = client.models.generate_content(
+        model=model, contents=prompt,
+        config=types.GenerateContentConfig(temperature=0),
+    )
+    return resp.text or ""
+
+
+def ai_decide(prompt, engine, ollama_model=None, gemini_key=None,
+              gemini_model=None, timeout=AI_DECIDE_TIMEOUT):
+    """Send a short instruction+text to the configured engine and return the
+    raw text reply. Returns None on ANY failure (engine down, timeout, bad
+    config, empty reply) -- callers fall back to their deterministic result,
+    so extraction never crashes or blocks on the model."""
+    try:
+        if engine == "ollama":
+            raw = _ai_ollama(prompt, ollama_model or "qwen3:8b", timeout)
+        elif engine == "gemini":
+            if not gemini_key:
+                return None
+            raw = _ai_gemini(prompt, gemini_key,
+                             gemini_model or "gemini-3.1-flash-lite")
+        else:
+            return None
+    except Exception:
+        return None
+    raw = (raw or "").strip()
+    return raw or None

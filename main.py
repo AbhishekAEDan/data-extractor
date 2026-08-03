@@ -31,7 +31,7 @@ ENV_PATH = os.path.join(BASE, ".env")
 
 DEFAULT_CONFIG = {
     "engine": "ollama",                       # "ollama" | "gemini"
-    "ollama_model": "qwen3:4b-instruct",
+    "ollama_model": "qwen3:8b",
     "gemini_model": "gemini-3.1-flash-lite",
     "subject": "auto",                        # "auto" | "ela" | "it"
 }
@@ -49,6 +49,13 @@ def load_config():
                 cfg.update(json.load(f))
         except Exception:
             pass
+        # one-time migration: the old default local model is superseded
+        if cfg.get("ollama_model") == "qwen3:4b-instruct":
+            cfg["ollama_model"] = "qwen3:8b"
+            try:
+                save_config(cfg)
+            except Exception:
+                pass
     return cfg
 
 
@@ -64,6 +71,28 @@ def load_api_key():
                 if line.strip().startswith("GEMINI_API_KEY="):
                     return line.strip().split("=", 1)[1]
     return os.getenv("GEMINI_API_KEY", "")
+
+
+def make_ai(cfg):
+    """A `prompt -> reply text | None` callable bound to the configured engine,
+    for writers that want an AI fallback on a structural ambiguity. Returns
+    None when no engine can be used, so callers stay fully deterministic.
+    The reply is only ever used to LOCATE a split point in the document text --
+    model words never become cell content."""
+    engine = cfg.get("engine")
+    key = load_api_key() if engine == "gemini" else ""
+    if engine == "gemini" and not key:
+        return None
+    if engine not in ("ollama", "gemini"):
+        return None
+    from judge import ai_decide
+
+    def _ai(prompt):
+        return ai_decide(prompt, engine,
+                         ollama_model=cfg.get("ollama_model"),
+                         gemini_key=key,
+                         gemini_model=cfg.get("gemini_model"))
+    return _ai
 
 
 def save_api_key(key):
@@ -315,7 +344,7 @@ def menu_engine(cfg):
             time.sleep(1)
             return
         if c == "3":
-            m = input("  Ollama model (e.g. qwen3:4b-instruct, hermes3:8b): ").strip()
+            m = input("  Ollama model (e.g. qwen3:8b, hermes3:8b): ").strip()
             if m:
                 cfg["ollama_model"] = m
                 save_config(cfg)
@@ -559,7 +588,7 @@ def run_extraction(cfg, sources):
             print(f"\n  [i] {len(labels)} unrecognised section heading(s) kept "
                   f"as extra columns in full_extract.csv: "
                   + ", ".join(f'"{l}"' for l in labels))
-        paths = write_all_it(rows, OUT_DIR)
+        paths = write_all_it(rows, OUT_DIR, ai=make_ai(cfg))
     else:
         mapping = handle_unknown_headings(cfg, label_files) if label_files else {}
         rows = [remap_unknown(r, mapping) for r in rows]

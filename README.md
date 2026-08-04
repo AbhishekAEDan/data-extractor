@@ -70,12 +70,21 @@ engine is local and free, and **IT extraction needs no engine at all**.
 
 | How | Where |
 |---|---|
-| In-app | menu → `4) Change Gemini API key` (saved to a git-ignored `.env`) |
+| In-app | menu → `3) Select engine` → `5) Change Gemini API key` (saved to a git-ignored `.env`) |
 | Manual | copy `.env.example` → `.env`, paste your key |
 | Env var | set `GEMINI_API_KEY` in your environment |
 
 Get a key at <https://aistudio.google.com/apikey>. The real key **never**
 lands in this repo.
+
+## 🤖 Portable model cache
+
+When using the local **Ollama/Qwen** engine, the app automatically builds a
+portable cache of models in a sibling folder (`../AI Model/`). Copy that folder
+to a new computer and skip the 5 GB model download on first run — the app
+detects the cached model and imports it into Ollama automatically.
+
+Run `get_model.bat` (pipeline root) to pre-download a model and add it to the cache before distribution — useful for flash-drive or offline setups.
 
 ## 🗂️ What comes out
 

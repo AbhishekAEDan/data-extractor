@@ -42,7 +42,7 @@ from datetime import datetime
 from logger import LOGS_DIR, log
 from parser_it import IT_ORDER
 from writers import unit_sort_key, join_nonempty
-from xlsx_out import (_TBL_LINE, _TREQ_LINE, _index_images,  # noqa: F401
+from xlsx_out import (_RED, _TBL_LINE, _TREQ_LINE, _index_images,  # noqa: F401
                       write_xlsx)
 
 
@@ -209,8 +209,22 @@ class _C:
         return bool(self.text or self.img)
 
 
-def _finalize(path, header, rows):
+def _docname(r):
+    """The source .docx basename for one parsed row -- the value of the
+    "Document" column every IT sheet leads with."""
+    return os.path.basename(r.get("_file", "") or "")
+
+
+# every IT sheet leads with this column; it is plain text, never an image pair
+_DOC_COL = "Document"
+
+
+def _finalize(path, header, rows, fill_cells=None):
     """Write a sheet whose row entries are plain strings or `_C` cells.
+
+    `fill_cells` is an optional set of (row index, column NAME) pairs to fill
+    light red. Names, not indexes, because this runs before the image columns
+    are inserted and would otherwise shift underneath the caller.
 
     Every `_C` position expands to its content column followed by an image
     column -- but only when at least one row actually carries markers there,
@@ -232,7 +246,11 @@ def _finalize(path, header, rows):
             for j, r in enumerate(rows):
                 v = r[i]
                 out_rows[j].append(v.img if isinstance(v, _C) else "")
-    write_xlsx(path, out_h, out_rows)
+    fills = {}
+    for j, name in (fill_cells or ()):
+        if name in out_h:
+            fills[(j, out_h.index(name))] = _RED
+    write_xlsx(path, out_h, out_rows, fills=fills or None)
     return path
 
 
@@ -538,13 +556,13 @@ def dedupe_rows(rows, ai=None):
 # ---------- simple one-block sheets ----------
 
 def write_cover(rows, out_dir):
-    header = ["Module Number", "Module Title 1", "Module Descriptive Title",
-              "Learning Objectives"]
+    header = [_DOC_COL, "Module Number", "Module Title 1",
+              "Module Descriptive Title", "Learning Objectives"]
     data = []
     for r in _sorted_rows(rows):
         obj = _C(_body(r, "Learning Objectives"))
         if obj:
-            data.append([_mod(r), _title(r),
+            data.append([_docname(r), _mod(r), _title(r),
                          r.get("Module Descriptive Title", ""), obj])
     return _finalize(os.path.join(
         out_dir, "Unit cover page & Learning Objective.xlsx"), header, data)
@@ -595,9 +613,9 @@ def write_intro(rows, out_dir):
                 paras.append([ln])
         parsed.append((r, [_C("\n".join(p)) for p in paras]))
     n = max([len(p) for _, p in parsed] + [1])
-    header = (["Module Number", "Module Title 1"]
+    header = ([_DOC_COL, "Module Number", "Module Title 1"]
               + [f"Paragraph {i}" for i in range(1, n + 1)])
-    data = [[_mod(r), _title(r)] + pad_cells(paras, n)
+    data = [[_docname(r), _mod(r), _title(r)] + pad_cells(paras, n)
             for r, paras in parsed]
     return _finalize(os.path.join(
         out_dir, "Introduction Topic Overview.xlsx"), header, data)
@@ -633,7 +651,7 @@ def write_key_concepts(rows, out_dir):
         parsed.append((r, _C("\n".join(intro)),
                        [(h, _C("\n".join(b))) for h, b in blocks]))
     n = max([len(b) for _, _, b in parsed] + [1])
-    header = ["Lesson No.", "Key concepts intro"]
+    header = [_DOC_COL, "Lesson No.", "Key concepts intro"]
     for i in range(1, n + 1):
         header += [f"Heading {i}", f"Paragraph {i}"]
     data = []
@@ -645,7 +663,7 @@ def write_key_concepts(rows, out_dir):
         # `_C` cells and their image columns stay aligned
         while len(cells) < n * 2:
             cells += ["", _C("")]
-        data.append([_mod(r), intro] + cells)
+        data.append([_docname(r), _mod(r), intro] + cells)
     return _finalize(os.path.join(
         out_dir, "Key Concepts (Main Content).xlsx"), header, data)
 
@@ -685,7 +703,7 @@ def _pa_bucket(line):
 def write_practical(rows, out_dir):
     """Each bold sub-label starts a bucket; every bucket gets its own image
     column immediately after it when any document has markers there."""
-    header = ["Module Number", "Module Title 1", "Practical Title",
+    header = [_DOC_COL, "Module Number", "Module Title 1", "Practical Title",
               "Acitvity Intro ", "Guide/ Steps", "Success Criteria",
               "Discussion", "Troubleshooting", "Rubric "]
     data = []
@@ -710,7 +728,7 @@ def write_practical(rows, out_dir):
             if b:
                 cur = b
             buckets[cur].append(s)
-        data.append([_mod(r), _title(r), title]
+        data.append([_docname(r), _mod(r), _title(r), title]
                     + [_C("\n".join(buckets[k])) for k in
                        ("intro", "steps", "success", "discussion",
                         "trouble", "rubric")])
@@ -847,8 +865,9 @@ def _write_practice(rows, out_dir, filename, section, body_re, lead_cols,
             text, body_re, ai, ctx=f"{r.get('_file', '?')} / {section}")
         parsed.append((r, top, [_C(x) for x in items]))
     n = max([len(q) for _, _, q in parsed] + [1])
-    header = ["Module Number", "Module Title 1"] + lead_cols + _q_cols(q_name, n)
-    data = [[_mod(r), _title(r)]
+    header = ([_DOC_COL, "Module Number", "Module Title 1"]
+              + lead_cols + _q_cols(q_name, n))
+    data = [[_docname(r), _mod(r), _title(r)]
             + ([_C(top)] if lead_cols else [])
             + pad_cells(q, n)
             for r, top, q in parsed]
@@ -1024,18 +1043,18 @@ def write_mistakes(rows, out_dir, ai=None):
         if cells:
             parsed.append((r, cells))
     n = max([len(cells) // 2 for _, cells in parsed] + [1])
-    header = ["Module Number", "Module Title 1"]
+    header = [_DOC_COL, "Module Number", "Module Title 1"]
     for i in range(1, n + 1):
         header += [f"Mistake {i}", f"Tip {i}"]
-    data = [[_mod(r), _title(r)] + pad_cells(cells, n * 2)
+    data = [[_docname(r), _mod(r), _title(r)] + pad_cells(cells, n * 2)
             for r, cells in parsed]
     return _finalize(os.path.join(
         out_dir, "Common Mistakes & Tips.xlsx"), header, data)
 
 
 def write_real_world(rows, out_dir):
-    header = ["Module Number", "Module Title 1", "Intro/ paragraph", "Points",
-              "Think about it "]
+    header = [_DOC_COL, "Module Number", "Module Title 1", "Intro/ paragraph",
+              "Points", "Think about it "]
     data = []
     for r in _sorted_rows(rows):
         text = _body(r, "Real-World Application")
@@ -1046,18 +1065,18 @@ def write_real_world(rows, out_dir):
         m = re.search(r'^[\s•·●▪\t-]*think about it\b.*$', text, re.I | re.M)
         if m:
             text, think = text[:m.start()].rstrip(), text[m.start():].strip()
-        data.append([_mod(r), _title(r), _C(text), "", _C(think)])
+        data.append([_docname(r), _mod(r), _title(r), _C(text), "", _C(think)])
     return _finalize(os.path.join(
         out_dir, "Real-World Application.xlsx"), header, data)
 
 
 def write_summary(rows, out_dir):
-    header = ["Module Number", "Module Title 1", "Summary Content "]
+    header = [_DOC_COL, "Module Number", "Module Title 1", "Summary Content "]
     data = []
     for r in _sorted_rows(rows):
         obj = _C(_body(r, "Summary / Key Takeaways"))
         if obj:
-            data.append([_mod(r), _title(r), obj])
+            data.append([_docname(r), _mod(r), _title(r), obj])
     return _finalize(os.path.join(
         out_dir, "Summary Key Takeaways.xlsx"), header, data)
 
@@ -1091,6 +1110,16 @@ _ANS_LABEL_NUM = re.compile(r'^(?:section\s+)?\d{1,2}(?:\.\d{1,2})*\s*[.):]\s*',
 _ANS_LABEL_PAREN = re.compile(r'\s*\([^)]*\)\s*[.:;]?\s*$')
 
 
+# Practical Activity answer blocks. The Practical Activity has no question
+# side on the Answer Solution sheet, so its answers have nowhere to pair --
+# left in the flow they ride whichever category happens to precede them and
+# shift every answer after them. They get their own pseudo-bucket ("pa") that
+# the sheet simply drops; the text still reaches the document row and
+# full_extract.csv untouched.
+_PA_ANS_RE = re.compile(r'^(?:practical activity\b.*|model expected output\b.*)',
+                        re.I)
+
+
 def _ans_label(s):
     """The answer sub-block this line labels, or None if it is not a label.
 
@@ -1102,10 +1131,65 @@ def _ans_label(s):
     core = _ANS_LABEL_PAREN.sub("", _ANS_LABEL_NUM.sub("", _bare(s).strip()))
     if not core or len(core) > 60:
         return None
+    if _PA_ANS_RE.match(core):
+        return "pa"
     for rx, b in _ANS_BLOCKS:
         if rx.match(core):
             return b
     return None
+
+
+def _ans_label_inline(s):
+    """A label and its answer text sharing ONE line ("Challenge / \
+    Higher-Order Thinking: Model reasoning: ..."). Splits on the first ":" \
+    and checks whether the head alone passes `_ans_label`; if so returns
+    `(bucket, rest)` with `rest` the ORIGINAL trailing text verbatim (not
+    re-normalised), else None."""
+    i = s.find(":")
+    if i == -1:
+        return None
+    head = s[:i + 1]
+    rest = s[i + 1:].strip()
+    if not rest:
+        return None
+    b = _ans_label(head)
+    if b:
+        return (b, rest)
+    return None
+
+
+# Some documents label a challenge answer with a bold phrase and NO colon at
+# all ("Challenge Model Answer A search engine only helps you find images
+# ..."), so `_ans_label` fails the length guard and `_ans_label_inline` finds
+# no ":" to split on. The phrase itself is the delimiter here; the text after
+# it is the answer, verbatim.
+_ANS_NOCOLON_LABEL = re.compile(
+    r'^(?:challenge\s*/\s*higher[-\s]order thinking\s+model answers?'
+    r'|higher[-\s]order thinking\s+model answers?'
+    r'|challenge\s+model answers?'
+    r'|challenge\s+answers?)\s*:?\s+(?=\S)', re.I)
+
+
+def _ans_label_phrase(s):
+    """`_ans_label_inline` for the no-colon phrasing above: returns
+    `("hot", rest)` with `rest` the ORIGINAL trailing text verbatim, or None.
+    Only the challenge/higher-order phrasings are covered -- the other three
+    categories always write a colon."""
+    bare = _bare(s)
+    m = _ANS_NOCOLON_LABEL.match(bare)
+    if not m:
+        return None
+    rest = bare[m.end():].strip()
+    return ("hot", rest) if rest else None
+
+
+# "Challenge (7.1):" -- a sub-label that GROUPS the answer lines under it.
+# One group = one answer, because one group answers one numbered question.
+_ANS_GROUP_OPEN = re.compile(r'^challenge\s*\(\d+(?:\.\d+)*\)\s*:?\s*$', re.I)
+
+
+def _is_group_opener(line):
+    return bool(_ANS_GROUP_OPEN.match(_bare(line or "").strip()))
 
 
 # a sub-point bullet under the answer above it -- never an answer of its own
@@ -1141,11 +1225,26 @@ def _is_mapline(bare):
 _LETTER_LINE = re.compile(r'^[a-z][).]\s', re.I)
 
 
-def _fan(lines):
+def _fan(lines, with_nums=False):
     """Fan answer lines into items. Explicit '1.' numbering wins; unnumbered
     lines each start a new item. No slot cap -- callers size and pad their
-    own columns."""
+    own columns.
+
+    A line that opens with a TAB is a nested list level rendered by
+    `ListFormatter`; it can never open an answer of its own, it always glues
+    to the answer above it (File Maintenance's "Sub-folder 1..4" under its
+    "Main Folder:" line). Level-0 lines are unaffected.
+
+    With `with_nums`, returns `(items, numbers, raw_openers)`: `numbers[i]` is
+    the typed counter that opened item i (or None), `raw_openers[i]` its
+    opening line with that counter still attached (or None). Both exist for
+    the numbering-restart glue in `_fan_answers`: it has to SEE the counters,
+    and when it glues a run back into the answer above it the counters must
+    survive into the cell -- an answer of its own drops them, a sub-step of a
+    larger answer would be unreadable without them."""
     items = []
+    nums = []
+    raws = []
     head = []       # pending sub-heading lines, carried onto the next item
     below = False   # current item is a "Question N" label -- text follows it
     mapping = False  # current item is a run of "term → letter" mapping lines
@@ -1155,6 +1254,10 @@ def _fan(lines):
         # numbered slots don't shift. The marker is separated out into the
         # slot's adjacent image column later, by `_C`.
         if (_is_treq(ln) or _is_img(ln)) and items:
+            items[-1].append(ln)
+            continue
+        if items and ln[:1] == "\t":
+            # nested list level -- glue, never a new answer
             items[-1].append(ln)
             continue
         bare = _bare(ln).strip()
@@ -1170,10 +1273,14 @@ def _fan(lines):
             continue
         if m:
             items.append(head + [m.group(2).strip()])
+            nums.append(int(m.group(1)))
+            raws.append(ln.strip() if not head else None)
             head, below, mapping = [], False, mapline
         elif _ANS_QLABEL.match(bare):
             # keep the label itself -- it says WHICH question this solves
             items.append(head + [ln.strip()])
+            nums.append(None)
+            raws.append(None)
             head, below, mapping = [], True, False
         elif items and _LETTER_LINE.match(_bare(ln).strip()) \
                 and not _LETTER_LINE.match(_bare(items[-1][0])):
@@ -1194,10 +1301,15 @@ def _fan(lines):
             items[-1].append(ln.strip())
         elif ln.strip():
             items.append(head + [ln.strip()])
+            nums.append(None)
+            raws.append(None)
             head, mapping = [], mapline
     if head:                       # a heading with nothing after it -- keep it
         items.append(head)
-    return ["\n".join(x).strip() for x in items]
+        nums.append(None)
+        raws.append(None)
+    out = ["\n".join(x).strip() for x in items]
+    return (out, nums, raws) if with_nums else out
 
 
 def _fan_q(lines):
@@ -1246,6 +1358,149 @@ def _questions(r, ai=None):
     }
 
 
+_ANS_CAT_NAME = {
+    "gp": "Guided Practice",
+    "ip": "Independent Practice",
+    "hot": "Challenge / Higher-Order Thinking",
+    "kc": "Knowledge Check",
+}
+
+_AI_ANSCAT_PROMPT = """The text below is the answers section of a school \
+lesson. The answers for the category "{category}" were not found.
+
+Reply with ONLY the exact line of the text on which that category's answers \
+begin, copied character for character. No quotes, no explanation, no \
+commentary. If you cannot find it, reply NONE.
+
+Text:
+{text}"""
+
+
+def _ai_anscat_rescue(buckets, qs, text, ai, ctx):
+    """Safety net for a category bucket left empty by the deterministic
+    split even though its question side has items. Asks `ai` to locate the
+    verbatim line the category's answers start on; the reply is accepted
+    only when it matches (on `.strip()`) a line currently sitting in some
+    OTHER bucket, in which case that line and every subsequent line from the
+    same source bucket are moved, contiguously and in order, into the empty
+    bucket. Leaves `buckets` unchanged on any NONE/non-verbatim/failed
+    reply."""
+    for b in ("gp", "ip", "hot", "kc"):
+        if len(qs.get(b, [])) < 1 or buckets[b]:
+            continue
+        others = [k for k in ("gp", "ip", "hot", "kc") if k != b]
+        if not any(buckets[k] for k in others):
+            continue
+        prompt = _AI_ANSCAT_PROMPT.format(category=_ANS_CAT_NAME[b], text=text)
+        reply = _ai_ask(ai, prompt, ctx, f"answers: locate {_ANS_CAT_NAME[b]} start")
+        if not reply:
+            continue
+        reply = reply.strip().strip('"').strip()
+        if not reply or reply.upper().startswith("NONE"):
+            continue
+        found = None
+        for k in others:
+            for idx, ln in enumerate(buckets[k]):
+                if ln.strip() == reply:
+                    found = (k, idx)
+                    break
+            if found:
+                break
+        if not found:
+            continue
+        src, idx = found
+        moved = buckets[src][idx:]
+        buckets[src] = buckets[src][:idx]
+        inline = _ans_label_inline(moved[0])
+        if inline:
+            moved[0] = inline[1]
+        buckets[b].extend(moved)
+
+
+_AI_ANSMERGE_PROMPT = """The text below is the "{category}" answers of a \
+school lesson. It was split into {found} answers but the section only has \
+{wanted} questions, so the last answer has probably been broken into several \
+pieces (a sub-list, extra steps, or a continuation).
+
+Reply with ONLY the exact line of the text on which the LAST real answer \
+begins, copied character for character. No quotes, no explanation, no \
+commentary. If the answers are not over-split, reply NONE.
+
+Text:
+{text}"""
+
+
+def _fan_answers(lines, qcount, ai=None, ctx="", category=""):
+    """Fan one category's answer lines into answers. Returns
+    `(items, unresolved)`; `unresolved` is True when the category still has
+    more answers than questions and nothing could justify merging them, which
+    is what flags the row for a manual check.
+
+    Rules, in order:
+      1. Sub-label groups. If any "Challenge (7.1):" opener is present, the
+         openers ALONE define the boundaries: one group = one answer, opener
+         line kept verbatim at the top of its cell.
+      2. `_fan`, which already glues nested (tab-indented) lines.
+      3. Numbering restart. A counter that drops back to 1 after a higher one,
+         on a category that has already produced at least as many answers as
+         it has questions, is a SUB-list of the answer above it -- the whole
+         restarted run is glued back into that answer.
+      4. Last resort: ask `ai` where the last real answer begins and merge
+         everything from there. A NONE / non-verbatim / absent reply leaves
+         the answers alone and marks the category unresolved."""
+    lines = [ln for ln in lines if ln.strip()]
+    if any(_is_group_opener(ln) for ln in lines):
+        groups = []
+        for ln in lines:
+            if _is_group_opener(ln) or not groups:
+                groups.append([])
+            groups[-1].append(ln.strip() if ln[:1] != "\t" else ln)
+        return ["\n".join(g).strip() for g in groups], False
+
+    items, nums, raws = _fan(lines, with_nums=True)
+
+    def sub(i):
+        """Item i as a SUB-step: its own counter put back, so a glued run
+        still reads "1. ... 2. ..." inside the answer that owns it."""
+        if not raws[i]:
+            return items[i]
+        return "\n".join([raws[i]] + items[i].split("\n")[1:])
+
+    # numbering restart -> sub-list of the previous answer
+    while qcount >= 1 and len(items) > qcount:
+        cut = None
+        for i in range(1, len(items)):
+            if nums[i] == 1 and nums[i - 1] is not None and nums[i - 1] >= 1:
+                cut = i
+                break
+        if cut is None:
+            break
+        end, expect = cut + 1, 2
+        while end < len(items) and nums[end] == expect:
+            end, expect = end + 1, expect + 1
+        items[cut - 1] = "\n".join(
+            [items[cut - 1]] + [sub(i) for i in range(cut, end)]).strip()
+        del items[cut:end]
+        del nums[cut:end]
+        del raws[cut:end]
+
+    if qcount < 1 or len(items) <= qcount:
+        return items, False
+    if ai is not None:
+        text = "\n".join(lines)
+        prompt = _AI_ANSMERGE_PROMPT.format(
+            category=category, found=len(items), wanted=qcount, text=text)
+        reply = _ai_ask(ai, prompt, ctx, f"answers: last {category} answer")
+        if reply:
+            reply = reply.strip().strip('"').strip()
+            if reply and not reply.upper().startswith("NONE"):
+                for i, it in enumerate(items):
+                    if i and it.split("\n")[0].strip() == reply:
+                        items[i:] = ["\n".join(items[i:]).strip()]
+                        return items, len(items) > qcount
+    return items, True
+
+
 def write_answers(rows, out_dir, ai=None):
     """Question/answer pairs per category: each answer slot is preceded by the
     matching question slot from the source practice section. Every slot gets
@@ -1255,11 +1510,20 @@ def write_answers(rows, out_dir, ai=None):
         text = _body(r, "Answers & Solutions")
         if not text.strip():
             continue
-        buckets = {"gp": [], "ip": [], "hot": [], "kc": [], "": []}
+        buckets = {"gp": [], "ip": [], "hot": [], "kc": [], "pa": [], "": []}
         cur = ""
         for ln in text.split("\n"):
-            s = ln.strip()
-            if not s:
+            # leading tabs (nested list levels) are kept: the fanning rules
+            # need them. Everything else is stripped exactly as before.
+            s = ln.rstrip()
+            if not s.strip():
+                continue
+            s = s if s[:1] == "\t" else s.strip()
+            if _is_group_opener(s):
+                # "Challenge (7.1):" -- a challenge sub-label that GROUPS the
+                # lines under it; kept, unlike a plain block label
+                cur = "hot"
+                buckets["hot"].append(s.strip())
                 continue
             hit = _ans_label(s)
             if hit:
@@ -1269,38 +1533,70 @@ def write_answers(rows, out_dir, ai=None):
                 else:
                     cur = hit
                 continue
+            phrase = _ans_label_phrase(s)
+            if phrase:
+                cur = "hot"
+                buckets["hot"].append(phrase[1])
+                continue
+            inline = _ans_label_inline(s)
+            if inline:
+                b, rest = inline
+                if b == "hot" and cur == "hot":
+                    buckets["hot"].append(s)
+                else:
+                    cur = b
+                    buckets[cur].append(rest)
+                continue
             buckets[cur].append(s)
-        # answers before any recognised block label ride on Guided Practice
+        # answers before any recognised block label ride on Guided Practice.
+        # (A Practical Activity block opening the section switches `cur` to
+        # "pa" first, so its lines never land here -- and "pa" is dropped.)
         if buckets[""]:
             buckets["gp"] = buckets[""] + buckets["gp"]
         qs = _questions(r, ai)
-        parsed.append((r,
-                       {k: [_C(x) for x in _fan(buckets[k])]
-                        for k in ("gp", "ip", "hot", "kc")},
+        if ai is not None:
+            _ai_anscat_rescue(buckets, qs, text,
+                              ai, f"{r.get('_file', '?')} / Answers & Solutions")
+        ctx = f"{r.get('_file', '?')} / Answers & Solutions"
+        fans, unresolved = {}, False
+        for k in ("gp", "ip", "hot", "kc"):
+            got, flag = _fan_answers(buckets[k], len(qs.get(k, [])), ai, ctx,
+                                     _ANS_CAT_NAME[k])
+            fans[k] = [_C(x) for x in got]
+            unresolved = unresolved or flag
+        parsed.append((r, fans,
                        {k: [_C(x) for x in qs[k]]
-                        for k in ("gp", "ip", "hot", "kc")}))
+                        for k in ("gp", "ip", "hot", "kc")},
+                       unresolved))
     cats = [("gp", "Guided Practice"), ("ip", "Independent Practice"),
             ("hot", "Higher-Order Thinking"), ("kc", "Knowledge Check")]
     # a category is as wide as its longest side in any doc -- questions and
     # answers are never truncated to match each other, the short side pads
-    widths = {k: max([len(f[k]) for _, f, _ in parsed]
-                     + [len(q[k]) for _, _, q in parsed] + [1])
+    widths = {k: max([len(f[k]) for _, f, _, _ in parsed]
+                     + [len(q[k]) for _, _, q, _ in parsed] + [1])
               for k, _ in cats}
-    header = ["Module Number", "Module Title 1"]
+    header = [_DOC_COL, "Module Number", "Module Title 1"]
     for k, label in cats:
         for i in range(1, widths[k] + 1):
             header += [f"{label} Question {i}", f"{label} Answer {i}"]
-    data = []
-    for r, fans, ques in parsed:
+    data, flagged = [], set()
+    for r, fans, ques, unresolved in parsed:
         cells = []
+        orphan = False
         for k, _ in cats:
             q = pad_cells(ques[k], widths[k])
             a = pad_cells(fans[k], widths[k])
             for i in range(widths[k]):
+                # an answer with no question opposite it means the two sides
+                # did not line up -- a human has to look at that row
+                if a[i] and not q[i]:
+                    orphan = True
                 cells += [q[i], a[i]]
-        data.append([_mod(r), _title(r)] + cells)
+        if orphan or unresolved:
+            flagged.add((len(data), "Module Title 1"))
+        data.append([_docname(r), _mod(r), _title(r)] + cells)
     return _finalize(os.path.join(
-        out_dir, "Answer Solution.xlsx"), header, data)
+        out_dir, "Answer Solution.xlsx"), header, data, fill_cells=flagged)
 
 
 # ---------- suggested interactive moments ----------
@@ -1314,7 +1610,7 @@ def write_moments(rows, out_dir):
     """One row per suggested moment. Groups start at a 'Moment N' or
     'Location:'/'Where it fits:' line; the Section column carries the
     location, the Suggestion column the whole group verbatim."""
-    header = ["Module title ", "Section ", "Suggestion"]
+    header = [_DOC_COL, "Module title ", "Section ", "Suggestion"]
     data = []
     for r in _sorted_rows(rows):
         text = _body(r, "Suggested Interactive Moments")
@@ -1348,7 +1644,7 @@ def write_moments(rows, out_dir):
                 if m:
                     section = m.group(2).strip()
                     break
-            data.append([mod_title, section, _C("\n".join(g))])
+            data.append([_docname(r), mod_title, section, _C("\n".join(g))])
     return _finalize(os.path.join(
         out_dir, "Suggested Interactive Moments.xlsx"), header, data)
 

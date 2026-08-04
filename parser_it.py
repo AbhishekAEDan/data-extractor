@@ -283,6 +283,15 @@ def _is_heading(p, txt):
     return bold_fraction(p) >= 0.9 and len(txt) <= 90
 
 
+_RE_HLEVEL = re.compile(r'heading\s*(\d+)')
+
+
+def _heading_level(style):
+    """Numeric level of a Word Heading style ("heading 2" -> 2), else None."""
+    m = _RE_HLEVEL.match(style)
+    return int(m.group(1)) if m else None
+
+
 # lesson number: "Lesson 2.4", "Lessons 3.6-3.9"
 _RE_LESSON = re.compile(r'\blessons?\s*(\d+(?:\.\d+)*(?:\s*[-–]\s*\d+(?:\.\d+)*)?)',
                         re.I)
@@ -373,6 +382,8 @@ def parse_it_docx(path, unknown_labels=None):
     title_block = []       # lines before the first section heading
     misc = []
     current = None
+    answers_level = None    # heading level "Answers & Solutions" itself was
+                             # matched at, or None if it was plain-bold
 
     def add(line):
         if current is None:
@@ -448,13 +459,23 @@ def parse_it_docx(path, unknown_labels=None):
             # inside Answers & Solutions, plain-bold restatements of earlier
             # sections ("Guided Practice Answers", "5. Guided Practice:",
             # "Section 5: Practical Activity") are answer sub-blocks, not new
-            # sections -- only real Word Heading styles may switch away
+            # sections -- only a real Word Heading style at the SAME level or
+            # HIGHER (numerically <=) as the Answers heading itself may switch
+            # away. A deeper heading (e.g. Answers is Heading 2, its
+            # restatement sub-blocks are Heading 3) is still an answer
+            # sub-block -- some docs give every practice restatement its own
+            # (deeper) heading style instead of plain bold. If the Answers
+            # heading itself was plain-bold (answers_level is None), keep the
+            # old behavior: any real heading style switches away.
             if (hit and current == "Answers & Solutions"
-                    and not style.startswith("heading")
                     and hit not in ("Suggested Interactive Moments",
                                     "Developer Notes")):
-                sections[current].append(fmt_line)
-                continue
+                cur_level = _heading_level(style) if style.startswith("heading") else None
+                is_switch = cur_level is not None and (
+                    answers_level is None or cur_level <= answers_level)
+                if not is_switch:
+                    sections[current].append(fmt_line)
+                    continue
             if hit:
                 # A section the parser already filled, left, and is now
                 # entering AGAIN is the signature of a document holding two
@@ -468,6 +489,9 @@ def parse_it_docx(path, unknown_labels=None):
                         hit, len(sections[hit]))
                 current = hit
                 sections.setdefault(current, [])
+                if hit == "Answers & Solutions":
+                    answers_level = (_heading_level(style)
+                                      if style.startswith("heading") else None)
                 # heading may carry an inline title, e.g.
                 # "5. Practical Activity (Hands-On): Correct Posture ..."
                 rest = ""

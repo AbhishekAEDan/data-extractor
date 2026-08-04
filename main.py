@@ -329,6 +329,7 @@ def menu_engine(cfg):
         print("  2) Gemini API (smarter, needs key + internet)")
         print("  3) Change Ollama model name  [current: %s]" % cfg["ollama_model"])
         print("  4) Change Gemini model name  [current: %s]" % cfg["gemini_model"])
+        print("  5) Change Gemini API key")
         print("  0) Back")
         c = input("\n  Choice: ").strip()
         if c == "1":
@@ -353,6 +354,8 @@ def menu_engine(cfg):
             if m:
                 cfg["gemini_model"] = m
                 save_config(cfg)
+        elif c == "5":
+            menu_api_key()
         elif c == "0":
             return
 
@@ -607,9 +610,20 @@ def run_extraction(cfg, sources):
     pause()
 
 
-def open_output():
-    os.makedirs(OUT_DIR, exist_ok=True)
-    os.startfile(OUT_DIR)  # noqa -- Windows only
+def menu_fix_md_tables(sources):
+    clear()
+    print("--- Fix MD tables in documents ---")
+    try:
+        from md_table_fix import fix_md_tables
+        results = fix_md_tables(sources, OUT_DIR)
+        total_tables = sum(n for _, n in results)
+        if results:
+            print(f"\n  {total_tables} table(s) converted in {len(results)} document(s).")
+        else:
+            print("\n  No MD tables found.")
+    except Exception as e:
+        print(f"\n  [!] MD table fix failed: {e}")
+    pause()
 
 
 def main():
@@ -632,6 +646,7 @@ def main():
         log("update check: newer release available on GitHub")
     from bootstrap import auto_setup
     auto_setup(cfg)
+    run_checks(cfg, sources, verbose=False)
     time.sleep(1)
     while True:
         clear()
@@ -639,10 +654,7 @@ def main():
         print("\n  1) Run extraction")
         print("  2) Select subject (Auto / ELA / IT)")
         print("  3) Select engine (Qwen local / Gemini API)")
-        print("  4) Change Gemini API key")
-        print("  5) Check / auto-install requirements")
-        print("  6) Open output folder")
-        print("  7) Open documents folder")
+        print("  4) Fix MD tables in documents")
         print("  0) Exit")
         c = input("\n  Choice: ").strip()
         if c == "1":
@@ -653,17 +665,7 @@ def main():
         elif c == "3":
             menu_engine(cfg)
         elif c == "4":
-            menu_api_key()
-        elif c == "5":
-            clear()
-            print("--- Requirement checks ---")
-            auto_setup(cfg)
-            run_checks(cfg, sources)
-            pause()
-        elif c == "6":
-            open_output()
-        elif c == "7":
-            os.startfile(DOCS_DIR)  # noqa
+            menu_fix_md_tables(sources)
         elif c == "0":
             return
 

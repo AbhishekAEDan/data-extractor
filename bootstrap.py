@@ -116,7 +116,22 @@ def ensure_ollama_model(model):
     models = ollama_models()
     base = model.split(":")[0]
     if model in models or any(m.startswith(base) for m in models):
+        # already local: still let the cache back it up for other computers
+        try:
+            from model_cache import ensure_model
+            ensure_model(model)
+        except Exception:
+            pass
         return True
+    # not local: portable cache may hold it (import, no download); else it
+    # pulls and backs up. Non-fatal -- fall through to the plain pull on failure.
+    try:
+        from model_cache import ensure_model
+        if ensure_model(model):
+            print(f"  [setup] Model '{model}' ready.")
+            return True
+    except Exception as e:
+        print(f"  [setup] model cache unavailable ({e}) -- falling back to pull")
     print(f"  [setup] Model '{model}' not found locally. Pulling (one-time download)...")
     # inherit console so the user sees ollama's own progress bar
     ok = _run(["ollama", "pull", model])

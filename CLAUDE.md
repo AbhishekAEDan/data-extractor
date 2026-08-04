@@ -10,7 +10,7 @@ the IT path"); with no engine configured, IT output is fully deterministic.
 On the current corpus a live qwen3:8b run makes only 2 model calls and
 finishes in ~8s, and produces byte-identical output to the ai=None run.
 
-Version: **3.3.1** (bump lives in `updater.py:__version__`, imported by
+Version: **3.3.2** (bump lives in `updater.py:__version__`, imported by
 `main.py` for the banner). Repo: `AbhishekAEDan/data-extractor` on GitHub;
 `gh` is authed as AbhishekAEDan. Releases are flat `git archive` zips
 (no `repo-sha/` prefix) so the in-app self-updater can find `main.py` at
@@ -290,6 +290,34 @@ actually worked. Fixed (it now ends with `Text:\n{text}` like
 model answers either `NONE` or the "Task 1:" line; both are safe (a
 non-verbatim/NONE reply leaves the deterministic result standing).
 
+## Portable Ollama model cache (v3.3.2+)
+
+`model_cache.py:ensure_model(name)` manages a portable cache of Ollama
+models in a sibling folder: `../AI Model/` (i.e. `D:\lesson_table_pipeline\AI Model`).
+The cache mirrors Ollama's store layout (manifests/ + blobs/). Called
+from `bootstrap.py:ensure_ollama_model` at startup (non-fatal — AI is
+optional).
+
+Flow: if model exists in Ollama, export it to cache (if not already there);
+if in cache but not Ollama, import it into `%USERPROFILE%\.ollama\models`
+(or `OLLAMA_MODELS` env var if set); if in neither, run `ollama pull` and
+export. All failures are silent (logs only); extraction proceeds without AI.
+Purpose: copy the entire `AI Model/` folder to a new computer and avoid a
+5 GB model re-download on first run. `.gitignore` has `AI Model/` (defensive
+— folder is outside repo root).
+
+**Model distribution:** `get_model.bat` (pipeline root, not in repo) pulls a
+model via `ollama pull` (default qwen3:8b, pass an arg to override) then calls
+`model_cache.export_to_cache` to save it to `AI Model/`. Enables pre-loading
+models for distribution.
+
+**Flash-drive portability:** Copy the entire `lesson_table_pipeline/` folder
+(or just `AI Model/` if space-constrained; needs ~6 GB, NTFS/exFAT format;
+FAT32 cannot hold the 5.2 GB qwen3 blob) to a flash drive. On a new PC, keep
+`AI Model/` as a sibling to `Data Extractor`, install Ollama itself, and run
+the app — it auto-imports the cached model on first run, no network download
+needed.
+
 ## Working conventions for this project
 
 - **User's style is caveman-terse.** Keep prose replies short/fragment-y;
@@ -311,7 +339,9 @@ non-verbatim/NONE reply leaves the deterministic result standing).
   (stale copies of files not in scope for that task). After merging the
   agent's target file back, re-run the verification yourself against the
   real main-checkout files, not inside the worktree.
-- `main.py`'s menu numbering has shifted before (subject selector inserted
-  as item 2, pushing Gemini key/checks/output/documents down by one) — if
-  referencing menu numbers in README or elsewhere, re-check against
-  `main.py`'s actual `print()` calls rather than assuming.
+- `main.py`'s menu numbering has shifted before and just shifted again
+  (v3.3.1: removed output/documents folders, moved Gemini key into engine
+  submenu). Current menu: 1) Run extraction, 2) Select subject, 3) Select
+  engine, 4) Fix MD tables in documents, 0) Exit; Gemini key is now
+  engine submenu item 5. If referencing menu numbers in README or elsewhere,
+  re-check against `main.py`'s actual `print()` calls rather than assuming.

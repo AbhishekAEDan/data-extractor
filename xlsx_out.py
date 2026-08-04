@@ -42,8 +42,12 @@ _TREQ_TEXT = "TABLE REQUIRED"
 
 _YELLOW = "FFFF00"
 
+# light red -- "needs a human look". Used by the IT Answer Solution sheet to
+# mark rows whose answers could not be paired with questions with confidence.
+_RED = "FFC7CE"
+
 # narrow columns: identifiers and titles. Everything else is content.
-_NARROW_RE = re.compile(r'(number|no\.|title|section |term|form)', re.I)
+_NARROW_RE = re.compile(r'(number|no\.|title|section |term|form|document)', re.I)
 
 
 def _clean_cell(value):
@@ -142,7 +146,7 @@ def _embed_images(ws, row_idx, col_idx, paths):
     return offset
 
 
-def write_xlsx(path, header, data_rows, sheet_title=None):
+def write_xlsx(path, header, data_rows, sheet_title=None, fills=None):
     """Write one template sheet as a formatted .xlsx.
 
     Formatting: bold header row, frozen top row, every cell wrapped and
@@ -151,6 +155,12 @@ def write_xlsx(path, header, data_rows, sheet_title=None):
     string so Excel keeps "3.10" instead of coercing it to 3.1 -- this is the
     xlsx replacement for the `="3.10"` CSV hack the ELA writer used to need.
     Any cell containing "TABLE REQUIRED" gets a solid yellow fill.
+
+    `fills` is an optional {(data_row_index, column_index): "RRGGBB"} map of
+    extra solid fills, both indexes ZERO-BASED against `data_rows` / `header`.
+    It is the one hook a caller has for marking individual cells (the IT
+    Answer Solution sheet uses it for its light-red manual-check flag); every
+    other sheet passes nothing and is unaffected.
 
     Embedded pictures are only looked up when a marker index has been built
     (see `_index_images`); with an empty index the image pass does nothing."""
@@ -178,6 +188,11 @@ def write_xlsx(path, header, data_rows, sheet_title=None):
     # image columns sit next to the paragraph they belong to, so there can be
     # several of them per sheet: "Image" or "<content column> Image". Sheets
     # with no image columns at all (every ELA sheet) skip the pass entirely.
+    # the unit/module number column must stay TEXT-formatted. It is column 1
+    # on the ELA sheets and column 2 on the IT sheets, which lead with the
+    # plain "Document" column.
+    num_col = 2 if str(header[0]).strip() == "Document" else 1
+
     img_cols = [c for c in range(1, len(header) + 1)
                 if str(header[c - 1]).strip() == "Image"
                 or str(header[c - 1]).strip().endswith(" Image")]
@@ -188,11 +203,15 @@ def write_xlsx(path, header, data_rows, sheet_title=None):
             v = _clean_cell(v if v is not None else "")
             cell = ws.cell(row=i, column=c, value=v)
             cell.alignment = wrap
-            if c == 1:
+            if c == num_col:
                 # keep "3.10" as text -- never let Excel see it as a number
                 cell.number_format = "@"
             if isinstance(v, str) and _TREQ_TEXT in v:
                 cell.fill = yellow
+            colour = (fills or {}).get((i - 2, c - 1))
+            if colour:
+                cell.fill = PatternFill(fill_type="solid", fgColor=colour,
+                                        start_color=colour, end_color=colour)
         for img_col in img_cols:
             files = _cell_image_files(r[img_col - 1] if img_col - 1 < len(r) else "")
             if files:

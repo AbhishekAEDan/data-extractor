@@ -20,3 +20,9 @@ output/*
 documents/*
 !documents/.gitkeep
 *.docx
+
+# --- portable model cache (sibling ..\AI Model, never committed) ---
+AI Model/
+
+# temp model-download helper (lives at pipeline root, never committed)
+get_model.bat
